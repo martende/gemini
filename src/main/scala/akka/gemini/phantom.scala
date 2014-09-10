@@ -1,12 +1,13 @@
 package akka.gemini
 
-import java.io.{BufferedReader, InputStreamReader, OutputStream}
-import java.net.URL
+import java.io._
+import java.nio.channels.FileChannel
 
 import akka.actor._
 import akka.pattern.ask
 import akka.util.Timeout
 
+import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 import scala.concurrent.{Awaitable, Await, Future, Promise}
 import scala.reflect.ClassTag
@@ -15,8 +16,6 @@ import scala.util.{Failure, Success, Try}
 
 import play.api.libs.json._
 import play.api.libs.functional.syntax._
-
-
 
 abstract class PhantomException extends Throwable
 class NoSuchElementException extends PhantomException
@@ -30,7 +29,7 @@ class AutomationException(msg:String) extends PhantomException {
 class PhantomIdCounter extends Actor {
   var idx = 0
   override def preStart() {
-    println("PhantomIdCounter",self.toString())
+    //println("PhantomIdCounter",self.toString())
   }
   def receive = {
     case _ =>
@@ -42,13 +41,29 @@ class PhantomIdCounter extends Actor {
 class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.seconds) extends Actor with ActorLogging {
   import PhantomExecutionActor.Events._
 
-  val phantomCmd = {
+  var coreJsFile:Option[File] = None
+
+  private def inputToFile(is: java.io.InputStream, f: java.io.File) {
+    val in = scala.io.Source.fromInputStream(is)
+    val out = new java.io.PrintWriter(f)
+    try { in.getLines().foreach(out.println(_)) }
+    finally { out.close }
+  }
+
+  val phantomCmd:Seq[String] = {
     val c = context.system.settings.config
     import scala.collection.JavaConverters._
 
-    val soruceJS = this.getClass.getResource("/core.js").getFile
+    val tmpFile = File.createTempFile("core", ".js")
+    tmpFile.deleteOnExit()
+    coreJsFile = Some(tmpFile)
 
-    c.getString("phantom.bin") +: c.getStringList("phantom.args").asScala :+ soruceJS
+
+    inputToFile(this.getClass.getResourceAsStream("/core.js"),tmpFile)
+
+    val args:Seq[String] = c.getStringList("phantom.args").asScala
+
+    c.getString("phantom.bin") +: args :+ tmpFile.getPath
 
   }
 
@@ -72,6 +87,8 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
     gonaDie = true
     info(s"stopped url=$currentUrl")
     fatalPromise.trySuccess(1)
+
+    coreJsFile.map(fname => fname.delete() )
   }
 
   def instart(_sender:ActorRef):PartialFunction[Any, Unit] = {

@@ -172,6 +172,11 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
     val t = p.$("span").re("span[13]")
     assert(t.length == 2 )
   }
+  test("11111") {
+    val p: Page = PhantomExecutor(isDebug=false) // Create page
+    val r: Future[Boolean] = p.open("/testdata/t2.html")
+
+  }
 
 }
 
