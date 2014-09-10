@@ -1,6 +1,7 @@
 package akka.gemini
 
 import java.io.{BufferedReader, InputStreamReader, OutputStream}
+import java.net.URL
 
 import akka.actor._
 import akka.pattern.ask
@@ -14,7 +15,6 @@ import scala.util.{Failure, Success, Try}
 
 import play.api.libs.json._
 import play.api.libs.functional.syntax._
-
 
 
 
@@ -46,7 +46,9 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
     val c = context.system.settings.config
     import scala.collection.JavaConverters._
 
-    c.getString("phantom.bin") +: c.getStringList("phantom.args").asScala :+ "phantomjs/core.js"
+    val soruceJS = this.getClass.getResource("/core.js").getFile
+
+    c.getString("phantom.bin") +: c.getStringList("phantom.args").asScala :+ soruceJS
 
   }
 
@@ -533,7 +535,7 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
             errret(eid,"TimeoutException");
           }
         },100);"""
-    (fetcher ? AsyncEval(js.replaceAll("\r\n",""))).map {
+    (fetcher ? AsyncEval(js.replaceAll("[\r\n]",""))).map {
       case EvalResult(hui) =>
         Json.parse(hui.get).as[Boolean]
       case Failed(ex:Throwable) => throw ex
@@ -598,7 +600,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
   private def evfun(js:String): String = "page.evaluate(" +
     "function(selector) {" +
     """if (!window._query)console.log("$$INJECT");var R;var d = _query(selector);""" +
-    js.replaceAll("\r\n","") + "return R; } " + ","+selector+");"
+    js.replaceAll("[\r\n]","") + "return R; } " + ","+selector+");"
 
   def innerHTML:String = Await.result( (
     fetcher ? Eval(
@@ -665,7 +667,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
             throw("attr failed");
           }
 
-        """.replaceAll("\r\n","")
+        """.replaceAll("[\r\n]","")
 
     )).mapTo[EvalResult].map {
       case EvalResult(hui) => Json.parse(hui.get).as[T](r)
@@ -700,7 +702,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
           throw("attr failed");
         }
 
-        """.replaceAll("\r\n","")
+        """.replaceAll("[\r\n]","")
 
     )).mapTo[EvalResult].map {
       case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
@@ -774,7 +776,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
     def clickJsFunction(js:String) = "page.evaluate(" +
       "function(selector,h,w) {" +
       """if (!window._query)console.log("$$INJECT");var R;var d = _query(selector);""" +
-      js.replaceAll("\r\n","") + "return R; } " + ","+selector+",page.viewportSize.height,page.viewportSize.width);"
+      js.replaceAll("[\r\n]","") + "return R; } " + ","+selector+",page.viewportSize.height,page.viewportSize.width);"
 
     try
       Await.result( (
@@ -805,7 +807,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
             throw("click failed");
           }
 
-            """.replaceAll("\r\n","")
+            """.replaceAll("[\r\n]","")
 
         )).mapTo[EvalResult].map {
         case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
@@ -819,7 +821,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
     def movefun(js:String) = "page.evaluate(" +
       "function(selector,h,w) {" +
       """if (!window._query)console.log("$$INJECT");var R;var d = _query(selector);""" +
-      js.replaceAll("\r\n","") + "return R; } " + ","+selector+",page.viewportSize.height,page.viewportSize.width);"
+      js.replaceAll("[\r\n]","") + "return R; } " + ","+selector+",page.viewportSize.height,page.viewportSize.width);"
 
     try
       Await.result( (
@@ -863,7 +865,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
             throw("move failed");
           }
 
-            """.replaceAll("\r\n","")
+            """.replaceAll("[\r\n]","")
 
         )).mapTo[EvalResult].map {
         case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
@@ -922,7 +924,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
             throw("click failed");
           }
 
-        """.replaceAll("\r\n","")
+        """.replaceAll("[\r\n]","")
 
     )).mapTo[EvalResult].map {
     case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
@@ -1046,8 +1048,7 @@ object PhantomExecutor {
   def selectActor[T <: Actor  : ClassTag](system:ActorSystem,name:String) = {
     val timeout = Timeout(0.1 seconds)
     val myFutureStuff = system.actorSelection("akka://"+system.name+"/user/"+name)
-    val aid:ActorIdentity = Await.result((
-      myFutureStuff.ask(Identify(1))(timeout)).mapTo[ActorIdentity],
+    val aid:ActorIdentity = Await.result(myFutureStuff.ask(Identify(1))(timeout).mapTo[ActorIdentity],
       0.1 seconds)
     aid.ref match {
       case Some(cacher) =>

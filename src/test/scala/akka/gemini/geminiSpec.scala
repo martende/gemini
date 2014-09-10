@@ -27,13 +27,12 @@ with ImplicitSender with  */
 */
 class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutures with ImplicitSender {
 
-  val localPath = "file:///home/belka/airando2"
 
   //TODO: bad phantom bin should produce IOException
   //TODO: bad core.js path should produce some Exception ( not start timeout )
 
   test("Actor successfully started") {
-    val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=true),"test1")
+    val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=false),"test1")
     within (2 seconds) {
       fetcher ! PhantomExecutionActor.Events.Start()
 
@@ -41,20 +40,20 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
         case PhantomExecutionActor.Events.Started() =>
       }
 
-      fetcher ! PhantomExecutionActor.Events.OpenUrl(localPath + "/testdata/t2.html")
+      fetcher ! PhantomExecutionActor.Events.OpenUrl(this.getClass.getResource("/testdata/t2.html").toString)
 
       expectMsgPF() {
         case PhantomExecutionActor.Events.OpenUrlResult(Success(s)) =>
       }
+
+      fetcher ! akka.actor.PoisonPill
     }
   }
-/*
+
   test("t1") {
     val p = PhantomExecutor(isDebug=false)
 
-    //val f: Future[Int] =p.open(localPath + "testdata/t2.html")
-
-    assert ( p.open(localPath + "testdata/t2.html").futureValue )
+    assert ( p.open(this.getClass.getResource("/testdata/t2.html").toString).futureValue )
 
     assert(p.title == "t2")
 
@@ -73,12 +72,13 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
 
     assert(p.$("#d2").attr("class") == "t3 d2class")
 
+    p.close()
   }
 
   test("length") {
     val p = PhantomExecutor(isDebug=false)
 
-    assert ( p.open(localPath + "testdata/t2.html").futureValue )
+    assert ( p.open(this.getClass.getResource("/testdata/t2.html").toString).futureValue )
 
     val t = p.$("div.t3")
     assert( t.length == 2 )
@@ -89,7 +89,7 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
   test("t3") {
     val p = PhantomExecutor(isDebug=false)
 
-    assert ( p.open(localPath + "testdata/t2.html").futureValue )
+    assert ( p.open(this.getClass.getResource("/testdata/t2.html").toString).futureValue )
 
     p.$("div.t3").foreach { x =>
       val t = x.attr("id")
@@ -108,7 +108,7 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
   test("children $") {
     val p = PhantomExecutor(isDebug=false)
 
-    assert ( p.open(localPath + "testdata/t2.html").futureValue )
+    assert ( p.open(this.getClass.getResource("/testdata/t2.html").toString).futureValue )
 
     val c0 = p.$("div.c0")
     assert(c0.$("div").length == 2)
@@ -122,7 +122,7 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
   test("children $.$") {
     val p = PhantomExecutor(isDebug=false)
 
-    assert ( p.open(localPath + "testdata/t2.html").futureValue )
+    assert ( p.open(this.getClass.getResource("/testdata/t2.html").toString).futureValue )
 
     val c1= p.$("div.c1")
     val spans = c1.$("div").$("span")
@@ -140,7 +140,7 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
   test("getBoundingClientRect") {
     val p = PhantomExecutor(isDebug=false)
 
-    assert ( p.open(localPath + "testdata/t2.html").futureValue )
+    assert ( p.open(this.getClass.getResource("/testdata/t2.html").toString).futureValue )
 
     val cr= p.$("#d2").getBoundingClientRect
 
@@ -151,7 +151,7 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
   test("offsetParent")  {
     val p = PhantomExecutor(isDebug=false)
 
-    assert ( p.open(localPath + "testdata/t2.html").futureValue )
+    assert ( p.open(this.getClass.getResource("/testdata/t2.html").toString).futureValue )
 
     val op= p.$("#d2").offsetParent
     assert(op.tagName == "BODY")
@@ -167,11 +167,11 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
   test("re selector")  {
     val p = PhantomExecutor(isDebug=false)
 
-    assert ( p.open(localPath + "testdata/t2.html").futureValue )
+    assert ( p.open(this.getClass.getResource("/testdata/t2.html").toString).futureValue )
 
     val t = p.$("span").re("span[13]")
     assert(t.length == 2 )
   }
-*/
+
 }
 
