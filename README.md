@@ -53,5 +53,33 @@ p.close
 
 ###Install:
 
+Gemini uses pathched version of phantomjs with asyncIo api from https://github.com/execjosh/phantomjs.git and branch WIP-async-file-io
 
-asdasdasd
+**Warning !!!** - On current 1.9 phantomjs release gemini does not work.
+
+For instalation do something like 
+```
+git clone https://github.com/execjosh/phantomjs.git
+cd phantomjs
+git checkout WIP-async-file-io
+./build.sh
+```
+
+copy bin/phantomjs to your project and write phantom.bin - variable to application.conf
+
+###Configuiration:
+
+Sample application.conf part (for default sbt projects src/main/resources )
+
+```
+phantom {
+  // Path to binary phantomjs file - this repo produces 64bit compiled for ubuntu jessie bin
+  // bin/phantomjs: ELF 64-bit LSB  executable, x86-64, version 1 (SYSV), dynamically linked (uses shared libs), for GNU/Linux 2.6.18, BuildID[sha1]=6d1ee78f9e4370d6a33ebcb2cf989be26d4961e5, not stripped
+
+  bin = "./bin/phantomjs"   
+  // Some Extra args for phantomjs 
+  //args  =["--proxy=127.0.0.1:3128"]
+  args = []
+}
+```
+
