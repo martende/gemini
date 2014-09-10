@@ -7,7 +7,7 @@ Brings Jquery like DOM traversal to Scala. Avoid callbacks hell with fututres.
 ###Usage:
 ```scala
 
-import akka.gemini.{Page,PhantomExecutor}
+import akka.gemini.{Page,Selector,PhantomExecutor}
 import scala.concurrent.duration._
 
 // Create Browser Session
