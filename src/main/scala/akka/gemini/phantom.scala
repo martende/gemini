@@ -43,10 +43,11 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
   import PhantomExecutionActor.Events._
 
   val phantomCmd = {
-    val c =context.system.settings.config
+    val c = context.system.settings.config
     import scala.collection.JavaConverters._
 
     c.getString("phantom.bin") +: c.getStringList("phantom.args").asScala :+ "phantomjs/core.js"
+
   }
 
   import context.{become, dispatcher, system}
@@ -62,7 +63,7 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
   // var inOpen = false 
 
   override def preStart() {
-    debug(s"preStart $isDebug")
+    debug(s"preStart DebugMode=$isDebug")
   }
 
   override def postStop() {
@@ -80,7 +81,9 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
       case ev @ Started() =>
         become(started())
         _sender ! ev
-
+      case ev @ Finished() =>
+        become(failed())
+        _sender ! Failed(new Exception("phantom bin can't be started"))
     }
   }
 
@@ -174,14 +177,9 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
   }
 
   def execAsync() = {
-    val startedTimeout = system.scheduler.scheduleOnce(1000 milliseconds) {
-      fatalPromise.failure(new Exception("start-timeout"))
-    }
 
     val outputOpened = Promise[OutputStream]()
     val magicReceived = Promise[Boolean]()
-
-
 
     def processLine(s:String) {
       val cmd = if ( s.length >=4 ) s.substring(0,3) else "???"
@@ -221,7 +219,7 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
       }
     }
 
-    val process = Process(phantomCmd).run(new ProcessIO(
+    val processor = new ProcessIO(
     {
       out =>
         outputOpened.success(out)
@@ -239,43 +237,61 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
         readFully()
     },
     _ => ()
-    ))
+    )
 
-    val exec = Future {
-      val ev = process.exitValue()
-      debug(s"phantom cmd finished and returns $ev")
-      ev
+    val processOp = try {
+      debug("Start: " + phantomCmd.mkString(" "))
+      Some(Process(phantomCmd).run(processor))
+    } catch {
+      case ex:Exception =>
+        error(s"Start phantom exception $ex")
+        self ! Failed(ex)
+        None
     }
 
-    val timeout = system.scheduler.scheduleOnce(execTimeout) {
-      //process.destroy()
-      val msg = s"Exec timeout=$execTimeout, url=$currentUrl"
-      error(msg)
-      fatalPromise.failure(new Exception(msg))
+    processOp match {
+      case Some(process) =>
+        val startedTimeout = system.scheduler.scheduleOnce(1000 milliseconds) {
+          fatalPromise.failure(new Exception("start-timeout"))
+        }
+        val exec = Future {
+          val ev = process.exitValue()
+          debug(s"phantom cmd finished and returns $ev")
+          ev
+        }
+
+        val timeout = system.scheduler.scheduleOnce(execTimeout) {
+          //process.destroy()
+          val msg = s"Exec timeout=$execTimeout, url=$currentUrl"
+          error(msg)
+          fatalPromise.failure(new Exception(msg))
+        }
+
+        val startFuture = Future.sequence(List(outputOpened.future, magicReceived.future))
+
+        startFuture.onSuccess {
+          case List(out:OutputStream,true) =>
+            outputStream=out
+            startedTimeout.cancel()
+            self ! Started()
+        }
+
+        val completeFuture = Future.firstCompletedOf(Seq(fatalPromise.future,exec))
+
+        completeFuture.onComplete {
+          case Success(v) =>
+            process.destroy()
+            timeout.cancel()
+            if (! gonaDie) self ! Finished()
+          case Failure(except:Throwable) =>
+            process.destroy()
+            timeout.cancel()
+            if (! gonaDie) self ! Failed(except:Throwable)
+        }
+
+      case None =>
     }
 
-    val r = Future.firstCompletedOf(Seq(fatalPromise.future,exec))
-
-    // postprocessing cleanup
-    r.onComplete {
-      case Success(v) =>
-        process.destroy()
-        timeout.cancel()
-        if (! gonaDie) self ! Finished()
-      case Failure(except:Throwable) =>
-        process.destroy()
-        timeout.cancel()
-        if (! gonaDie) self ! Failed(except:Throwable)
-    }
-
-    val startFuture = Future.sequence(List(outputOpened.future, magicReceived.future))
-
-    startFuture.onSuccess {
-      case List(out:OutputStream,true) =>
-        outputStream=out
-        startedTimeout.cancel()
-        self ! Started()
-    }
 
   }
 
