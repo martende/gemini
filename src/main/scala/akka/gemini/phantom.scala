@@ -4,7 +4,7 @@ import java.io._
 import java.nio.channels.FileChannel
 
 import akka.actor._
-import akka.pattern.ask
+import akka.pattern.{AskTimeoutException, ask}
 import akka.util.Timeout
 
 import scala.collection.JavaConverters._
@@ -38,7 +38,8 @@ class PhantomIdCounter extends Actor {
   }
 }
 
-class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.seconds) extends Actor with ActorLogging {
+class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.seconds,startTimeout:FiniteDuration = 1.seconds,
+  viewportHeight:Int,viewportWidth:Int) extends Actor with ActorLogging {
   import PhantomExecutionActor.Events._
 
   var coreJsFile:Option[File] = None
@@ -63,7 +64,11 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
 
     val args:Seq[String] = c.getStringList("phantom.args").asScala
 
-    c.getString("phantom.bin") +: args :+ tmpFile.getPath
+    val appArgs = Seq(
+      "--viewportHeight=",viewportHeight.toString,
+      "--viewportWidth=",viewportWidth.toString
+    )
+    c.getString("phantom.bin") +: args :+ tmpFile.getPath :+ appArgs
 
   }
 
@@ -270,7 +275,7 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
 
     processOp match {
       case Some(process) =>
-        val startedTimeout = system.scheduler.scheduleOnce(1000 milliseconds) {
+        val startedTimeout = system.scheduler.scheduleOnce(startTimeout) {
           fatalPromise.failure(new Exception("start-timeout"))
         }
         val exec = Future {
@@ -317,7 +322,8 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
 }
 
 object PhantomExecutionActor {
-  def props(isDebug: Boolean = true,execTimeout:FiniteDuration=120.seconds ): Props = Props(new PhantomExecutionActor(isDebug,execTimeout))
+  def props(isDebug: Boolean = true,execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration=1 seconds,viewportHeight:Int,viewportWidth:Int ): Props =
+    Props(new PhantomExecutionActor(isDebug,execTimeout,startTimeout,viewportHeight,viewportWidth))
   object Events {
     case class Start()
     case class Started()
@@ -394,14 +400,17 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
 
   def open(url:String,openTimeout:FiniteDuration = 10.seconds): Future[Boolean] = {
     assert(opened)
-    ask(fetcher, Start())(Timeout(openTimeout)).flatMap {
+    fetcher.ask(Start())(openTimeout).flatMap {
       case Started() =>
-        (fetcher ? OpenUrl(url)).mapTo[OpenUrlResult].map {
+
+        fetcher.ask(OpenUrl(url))(openTimeout).recover{
+          case ex:AskTimeoutException => OpenUrlResult(Failure(ex))
+        }.map {
           case OpenUrlResult(Success(_)) => true
-          case OpenUrlResult(Failure(ex)) => throw ex
+          case OpenUrlResult(Failure(ex)) => throw new AutomationException(s"Open url:'$url' - failed $ex")
         }
       case Failed(ex) =>
-        throw ex
+        throw new AutomationException(s"Open - failed $ex")
     }
 
   }
@@ -553,9 +562,9 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
           }
         },100);"""
     (fetcher ? AsyncEval(js.replaceAll("[\r\n]",""))).map {
-      case EvalResult(hui) =>
-        Json.parse(hui.get).as[Boolean]
-      case Failed(ex:Throwable) => throw ex
+      case EvalResult(Failure(ex)) => throw new AutomationException(s"waitForSelection $ex")
+      case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
+      case Failed(ex:Throwable) => throw new AutomationException(s"waitForSelection $ex")
     }
   }
 
@@ -640,7 +649,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
 
   def _cleanup(s:String) = s.replace("\u00a0"," ")
 
-  def innerText:String = Await.result( (
+  def innerText:String = try Await.result( (
     fetcher ? Eval(
       evfun("""R="";
             for (var i=0;i<d.length;i++) {R+=d[i].innerText;}
@@ -648,13 +657,21 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
     )).mapTo[EvalResult].map {
     case EvalResult(hui) => _cleanup(Json.parse(hui.get).as[String])
   } , fastTimeout)
+  catch {
+    case e:Throwable => throw new AutomationException(s"innerText $selector failed: $e" )
+  }
 
-  def length:Int = Await.result( (
+
+  def length:Int = try Await.result( (
     fetcher ? Eval(
       evfun("""R=d.length;""")
     )).mapTo[EvalResult].map {
     case EvalResult(hui) => Json.parse(hui.get).as[Int]
   } , fastTimeout )
+  catch {
+    case e:Throwable => throw new AutomationException(s"singleValJs $selector failed: $e" )
+  }
+
   def exists() = length > 0
   def at(idx:Int) = Selector(page,this,idx)
 
@@ -994,7 +1011,7 @@ class NestedSelector(page:Page,parent:Selector,css:String) extends Selector(page
 }
 
 class RegexpSelector(page:Page,parent:Selector,re:String) extends Selector(page) {
-  def selector = "[" + parent.selector + ",'re','"+re.replace("\\","\\\\")  +"']"
+  def selector = "[" + parent.selector + ",'re','"+re.replace("\\","\\\\").replace("'","\\'")  +"']"
 }
 
 class ChildSelector(page:Page,parent:Selector) extends Selector(page) {
@@ -1043,9 +1060,9 @@ object PhantomExecutor {
   def quote(q:String) = q.replace("'","\\'")
   def htmlquote(q:String) = q.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
 
-  def apply(isDebug:Boolean=true,execTimeout:FiniteDuration=120.seconds)(implicit system:ActorSystem): Page = {
+  def apply(isDebug:Boolean=true,execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration = 1000 milliseconds,viewportHeight:Int=768,viewportWidth:Int=1024)(implicit system:ActorSystem): Page = {
     val idd = nextPhantomId
-    val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=isDebug,execTimeout=execTimeout),name=s"PhantomExecutor-$idd")
+    val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=isDebug,execTimeout=execTimeout,startTimeout=startTimeout,viewportHeight,viewportWidth),name=s"PhantomExecutor-$idd")
     new Page(fetcher,system)
   }
 
