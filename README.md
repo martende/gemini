@@ -65,7 +65,23 @@ git checkout WIP-async-file-io
 ./build.sh
 ```
 
-copy bin/phantomjs to your project and write phantom.bin - variable to application.conf
+copy bin/phantomjs to your project and write phantom.bin - variable to application.conf.
+
+To install from source use sbt on cloned project
+
+```
+git clone https://github.com/martende/gemini
+cd gemini
+sbt publish-local
+```
+
+and then in build.sbt write library deps 
+
+```
+libraryDependencies ++= Seq(
+"com.github.martende" %% "gemini" % "0.1-SNAPSHOT"
+)
+```
 
 ###Configuiration:
 
@@ -83,3 +99,52 @@ phantom {
 }
 ```
 
+###Sample Sbt example project
+
+#####/build.sbt
+```
+scalaVersion := "2.11.2"
+
+libraryDependencies ++= Seq(
+"com.github.martende" %% "gemini" % "0.1-SNAPSHOT"
+)
+
+```
+
+#####/src/main/scala/hello.scala
+```
+import akka.gemini.PhantomExecutor
+import akka.actor.ActorSystem
+import scala.concurrent.duration._
+
+object Hi {
+  def main(args: Array[String]) = {
+  	implicit val system = ActorSystem("MySystem")
+	val p = PhantomExecutor(isDebug=false)
+	
+	scala.concurrent.Await.result({
+		p.open("http://www.google.com/")
+	},10 seconds)
+
+	p.render("screen.png")
+	p.close()
+	
+	println("Screenshot screen.png done.")
+	system.shutdown()
+	
+  }
+}
+
+```
+
+#####src/main/resources/application.conf
+```
+akka {
+	loglevel="DEBUG"
+}
+
+phantom {
+  bin = "../gemini/bin/phantomjs"
+  args = []
+}
+```
