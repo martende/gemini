@@ -38,8 +38,7 @@ class PhantomIdCounter extends Actor {
   }
 }
 
-class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.seconds,startTimeout:FiniteDuration = 1.seconds,
-  viewportHeight:Int,viewportWidth:Int) extends Actor with ActorLogging {
+class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor with ActorLogging {
   import PhantomExecutionActor.Events._
 
   var coreJsFile:Option[File] = None
@@ -64,11 +63,12 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
 
     val args:Seq[String] = c.getStringList("phantom.args").asScala
 
-    val appArgs = Seq(
-      "--viewportHeight=",viewportHeight.toString,
-      "--viewportWidth=",viewportWidth.toString
+    val appArgs:Seq[String] = Seq(
+      "--viewportHeight="+conf.viewportHeight.toString,
+      "--viewportWidth="+conf.viewportWidth.toString
     )
-    c.getString("phantom.bin") +: args :+ tmpFile.getPath :+ appArgs
+
+    (c.getString("phantom.bin") +: args :+ tmpFile.getPath) ++ appArgs
 
   }
 
@@ -275,7 +275,7 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
 
     processOp match {
       case Some(process) =>
-        val startedTimeout = system.scheduler.scheduleOnce(startTimeout) {
+        val startedTimeout = system.scheduler.scheduleOnce(conf.startTimeout) {
           fatalPromise.failure(new Exception("start-timeout"))
         }
         val exec = Future {
@@ -284,9 +284,9 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
           ev
         }
 
-        val timeout = system.scheduler.scheduleOnce(execTimeout) {
+        val timeout = system.scheduler.scheduleOnce(conf.execTimeout) {
           //process.destroy()
-          val msg = s"Exec timeout=$execTimeout, url=$currentUrl"
+          val msg = s"Exec timeout=${conf.execTimeout}, url=$currentUrl"
           error(msg)
           fatalPromise.failure(new Exception(msg))
         }
@@ -321,9 +321,10 @@ class PhantomExecutionActor(_isDebug:Boolean,execTimeout:FiniteDuration = 120.se
 
 }
 
+case class PhantomConfig(execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration=1 seconds,viewportHeight:Int=768,viewportWidth:Int=1024)
+
 object PhantomExecutionActor {
-  def props(isDebug: Boolean = true,execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration=1 seconds,viewportHeight:Int,viewportWidth:Int ): Props =
-    Props(new PhantomExecutionActor(isDebug,execTimeout,startTimeout,viewportHeight,viewportWidth))
+  def props(isDebug: Boolean = true, conf:PhantomConfig = PhantomConfig()): Props = Props(new PhantomExecutionActor(isDebug,conf))
   object Events {
     case class Start()
     case class Started()
@@ -608,6 +609,7 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
   def $(cssSelectors:String*) = if (cssSelectors.length == 1 ) Selector(this,cssSelectors.head)
   else Selector(this,cssSelectors.map {css => Selector(this,css) })
 
+  def $$(cssSelectors:Selector*) = if (cssSelectors.length == 1 ) cssSelectors.head else Selector(this,cssSelectors)
 }
 
 abstract class Selector(page:Page) extends Traversable[Selector] {
@@ -1060,9 +1062,9 @@ object PhantomExecutor {
   def quote(q:String) = q.replace("'","\\'")
   def htmlquote(q:String) = q.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
 
-  def apply(isDebug:Boolean=true,execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration = 1000 milliseconds,viewportHeight:Int=768,viewportWidth:Int=1024)(implicit system:ActorSystem): Page = {
+  def apply(isDebug:Boolean=true,conf:PhantomConfig=PhantomConfig())(implicit system:ActorSystem): Page = {
     val idd = nextPhantomId
-    val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=isDebug,execTimeout=execTimeout,startTimeout=startTimeout,viewportHeight,viewportWidth),name=s"PhantomExecutor-$idd")
+    val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=isDebug,conf),name=s"PhantomExecutor-$idd")
     new Page(fetcher,system)
   }
 

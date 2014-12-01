@@ -32,7 +32,7 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
   //TODO: bad core.js path should produce some Exception ( not start timeout )
 
   test("Actor successfully started") {
-    val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=false),"test1")
+    val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=true),"test1")
     within (2 seconds) {
       fetcher ! PhantomExecutionActor.Events.Start()
 
@@ -49,6 +49,7 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
       fetcher ! akka.actor.PoisonPill
     }
   }
+
 
   test("t1") {
     val p = PhantomExecutor(isDebug=false)
