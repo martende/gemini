@@ -187,7 +187,7 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
       become(instart(sender()))
       execAsync()
 
-    case x => error("Unknown Signal $x")
+    case x => error(s"Unknown Signal $x")
   }
 
   def sendPhantom(cmd:String) {
@@ -574,7 +574,7 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
       case els:ListedSelector =>
         els.items.map {
           el => s"_query(${el.selector}).length >= 1"
-        }.mkString(" && ");
+        }.mkString(if ( els.conjType == ConjunctionType.AND) " && " else " || ");
       case _ =>
         s"_query(${el.selector}).length >= 1"
     })
@@ -586,7 +586,7 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
       case els:ListedSelector =>
         "return " + els.items.map {
           el => s"_query(${el.selector}).length > 0 && (_query(${el.selector})[0].getAttribute('$attr') || '' ) == '${quote(v)}' "
-        }.mkString(" && ");
+        }.mkString(if ( els.conjType == ConjunctionType.AND) " && " else " || ");
       case _ =>
         s"return  _query(${el.selector}).length > 0 && (_query(${el.selector})[0].getAttribute('$attr') || '' ) == '${quote(v)}' "
     }
@@ -598,7 +598,7 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
       case els:ListedSelector =>
         "return " + els.items.map {
           el => s"_query(${el.selector}).length > 0 && (! _query(${el.selector})[0].offsetParent ) "
-        }.mkString(" && ");
+        }.mkString(if ( els.conjType == ConjunctionType.AND) " && " else " || ");
       case _ =>
         s"return  _query(${el.selector}).length > 0 && (! _query(${el.selector})[0].offsetParent ) "
     }
@@ -607,9 +607,8 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
 
 
   def $(cssSelectors:String*) = if (cssSelectors.length == 1 ) Selector(this,cssSelectors.head)
-  else Selector(this,cssSelectors.map {css => Selector(this,css) })
+  else Selector(this,cssSelectors.map {css => Selector(this,css) },ConjunctionType.AND)
 
-  def $$(cssSelectors:Selector*) = if (cssSelectors.length == 1 ) cssSelectors.head else Selector(this,cssSelectors)
 }
 
 abstract class Selector(page:Page) extends Traversable[Selector] {
@@ -814,22 +813,22 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
       """if (!window._query)console.log("$$INJECT");var R;var d = _query(selector);""" +
       js.replaceAll("[\r\n]","") + "return R; } " + ","+selector+",page.viewportSize.height,page.viewportSize.width);"
 
-    try
-      Await.result( (
+    wrapException {
+      Await.result((
         fetcher ? Eval(
-          """var rect = """ + clickJsFunction("""R=null;
+          """var rect = """ + clickJsFunction( """R=null;
             if ( d.length == 0 ) {
               console.log("ERROR:click:"+JSON.stringify(selector)+" element not found");
               R = -1;
             } else if ( d.length > 1 ) {
               console.log("ERROR:click:"+JSON.stringify(selector)+" many elements");
               R = -2;
-            } else {""" + __calcBoundingRect  + """
+            } else {""" + __calcBoundingRect +
+            """
               var p = R.top + R.height / 2;
               if ( p > h ) R = -3;
             }
-                                                """) +
-            """
+                                                """) + """
           if ( rect == -1 ) {
             throw("NoSuchElementException");
           } else if ( rect == -2 ) {
@@ -848,8 +847,6 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
         )).mapTo[EvalResult].map {
         case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
       } , timeout)
-    catch {
-      case e:Throwable => throw new AutomationException(s"click $selector failed: $e" )
     }
   }
 
@@ -859,7 +856,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
       """if (!window._query)console.log("$$INJECT");var R;var d = _query(selector);""" +
       js.replaceAll("[\r\n]","") + "return R; } " + ","+selector+",page.viewportSize.height,page.viewportSize.width);"
 
-    try
+    wrapException {
       Await.result( (
         fetcher ? Eval(
           """var rect = """ + movefun("""R=null;
@@ -906,8 +903,6 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
         )).mapTo[EvalResult].map {
         case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
       } , fastTimeout)
-    catch {
-      case e:Throwable => throw new AutomationException(s"move $selector failed: $e" )
     }
   }
 
@@ -920,12 +915,13 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
                 console.log(2,R0.top,R0.left);
                 R.top += R0.top;
                 R.left += R0.left + 5;
-                console.log(3,R.top,R.left);
                 fe = fe.ownerDocument.defaultView.frameElement;
               }"""
-  def highlight() = Await.result( (
-    fetcher ? Eval(
-      """var rect = """ + evfun("""R=null;
+
+  def highlight() = wrapException {
+    Await.result( (
+      fetcher ? Eval(
+        """var rect = """ + evfun("""R=null;
             if ( d.length == 0 ) {
               console.log("ERROR:click:"+JSON.stringify(selector)+" element not found");
               R = -1;
@@ -935,7 +931,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
             } else {""" + __calcBoundingRect + """
             }
                                                """) +
-        """
+          """
           if ( rect == -1 ) {
             throw("NoSuchElementException");
           } else if ( rect == -2 ) {
@@ -960,11 +956,83 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
             throw("click failed");
           }
 
-        """.replaceAll("[\r\n]","")
+          """.replaceAll("[\r\n]","")
 
-    )).mapTo[EvalResult].map {
-    case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
-  } , fastTimeout)
+      )).mapTo[EvalResult].map {
+      case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
+    } , fastTimeout)
+  }
+
+  def render(_fname:String) = {
+    val fname = if ( _fname.endsWith(".png") ) _fname.substring(0,_fname.length-4) else _fname
+    val _renderCode = s"var pcr = this.page.clipRect;this.page.clipRect=rect;page.render('$fname.png');this.page.clipRect=pcr;"
+    wrapException {
+      Await.result( (
+        fetcher ? Eval(
+          ("""var rect = """ + evfun("""R=null;
+            if ( d.length == 0 ) {
+              console.log("ERROR:click:"+JSON.stringify(selector)+" element not found");
+              R = -1;
+            } else if ( d.length > 1 ) {
+              console.log("ERROR:click:"+JSON.stringify(selector)+" many elements");
+              R = -2;
+            } else {""" + __calcBoundingRect + """
+            }
+                                               """) +
+            """
+          if ( rect == -1 ) {
+            throw("NoSuchElementException");
+          } else if ( rect == -2 ) {
+            throw("ManyElementsException");
+          } else if ( rect ) {
+            """ + _renderCode + """
+            true;
+          } else {
+            throw("click failed");
+          }
+            """).replaceAll("[\r\n]","")
+
+        )).mapTo[EvalResult].map {
+        case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
+      } , fastTimeout)
+    }
+  }
+
+  def renderBase64() = {
+    val _renderCode = s"var pcr = this.page.clipRect;this.page.clipRect=rect;var b64 = page.renderBase64('PNG');this.page.clipRect=pcr;b64;"
+    wrapException {
+      Await.result( (
+        fetcher ? Eval(
+          ("""var rect = """ + evfun("""R=null;
+            if ( d.length == 0 ) {
+              console.log("ERROR:click:"+JSON.stringify(selector)+" element not found");
+              R = -1;
+            } else if ( d.length > 1 ) {
+              console.log("ERROR:click:"+JSON.stringify(selector)+" many elements");
+              R = -2;
+            } else {""" + __calcBoundingRect + """
+            }
+                                               """) +
+            """
+          if ( rect == -1 ) {
+            throw("NoSuchElementException");
+          } else if ( rect == -2 ) {
+            throw("ManyElementsException");
+          } else if ( rect ) {
+            """ + _renderCode + """
+          } else {
+            throw("click failed");
+          }
+                                """).replaceAll("[\r\n]","")
+
+        )).mapTo[EvalResult].map {
+        case EvalResult(hui) => Json.parse(hui.get).as[String]
+      } , fastTimeout)
+    }
+  }
+
+
+
   //def seq:Selector = this
 
   /*def filter(p: Selector => Boolean) = {
@@ -1039,7 +1107,11 @@ class IdxSelector(page:Page,parent:Selector,idx:Int) extends Selector(page) {
   }
 }
 
-class ListedSelector(page:Page,val items:Seq[Selector]) extends Selector(page) {
+object ConjunctionType extends Enumeration{
+    val AND,OR = Value
+}
+
+class ListedSelector(page:Page,val items:Seq[Selector],val conjType:ConjunctionType.Value) extends Selector(page) {
   /* Non implemented selector Item - that this selector can't be sent to JS */
   def selector = throw new Exception("Not implemented - that this selector can't be sent to JS")
 
@@ -1051,7 +1123,7 @@ class ListedSelector(page:Page,val items:Seq[Selector]) extends Selector(page) {
 object Selector {
   def apply(page:Page,css:String) = new CssSelector(page,css)
   def apply(page:Page,parent:Selector,idx:Int) = new IdxSelector(page,parent,idx)
-  def apply(page:Page,items:Seq[Selector]) = new ListedSelector(page,items)
+  def apply(page:Page,items:Seq[Selector],conjType:ConjunctionType.Value) = new ListedSelector(page,items,conjType)
 }
 
 
