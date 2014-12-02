@@ -4,6 +4,8 @@ import java.io._
 import java.nio.channels.FileChannel
 
 import akka.actor._
+import akka.event.DiagnosticLoggingAdapter
+import akka.event.Logging.MDC
 import akka.pattern.{AskTimeoutException, ask}
 import akka.util.Timeout
 
@@ -29,7 +31,7 @@ class AutomationException(msg:String) extends PhantomException {
 class PhantomIdCounter extends Actor {
   var idx = 0
   override def preStart() {
-    //println("PhantomIdCounter",self.toString())
+
   }
   def receive = {
     case _ =>
@@ -38,8 +40,12 @@ class PhantomIdCounter extends Actor {
   }
 }
 
-class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor with ActorLogging {
+class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor with akka.actor.DiagnosticActorLogging {
   import PhantomExecutionActor.Events._
+
+  val mdc = Map("phantomId" -> self.path.elements.last.split("-")(1))
+
+  override def mdc(currentMessage: Any): MDC = mdc
 
   var coreJsFile:Option[File] = None
 
@@ -48,6 +54,13 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
     val out = new java.io.PrintWriter(f)
     try { in.getLines().foreach(out.println(_)) }
     finally { out.close }
+  }
+
+  private def mkProxySeq(proxy:String) = {
+    if (proxy == "") Seq()
+    else if (proxy.startsWith("http://")) Seq("--proxy=" + proxy.substring(7),"--proxy-type=http")
+    else if (proxy.startsWith("socks://")) Seq("--proxy=" + proxy.substring(8),"--proxy-type=socks5")
+    else Seq("--proxy=" + proxy,"--proxy-type=http")
   }
 
   val phantomCmd:Seq[String] = {
@@ -63,12 +76,17 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
 
     val args:Seq[String] = c.getStringList("phantom.args").asScala
 
+    val phantomArgs: Seq[String] = args ++ ( if ( conf.proxy != "") mkProxySeq(conf.proxy)  else Seq() )
+
+
     val appArgs:Seq[String] = Seq(
+      tmpFile.getPath,
       "--viewportHeight="+conf.viewportHeight.toString,
-      "--viewportWidth="+conf.viewportWidth.toString
+      "--viewportWidth="+conf.viewportWidth.toString,
+      "--userAgent="+conf.userAgent
     )
 
-    (c.getString("phantom.bin") +: args :+ tmpFile.getPath) ++ appArgs
+    Seq(c.getString("phantom.bin")) ++ phantomArgs ++ appArgs
 
   }
 
@@ -107,7 +125,7 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
         _sender ! ev
       case ev @ Finished() =>
         become(failed())
-        _sender ! Failed(new Exception("phantom bin can't be started"))
+        _sender ! Failed(new Exception("phantom binary can't be started"))
     }
   }
 
@@ -115,14 +133,12 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
     case _ => sender ! Failed(new Exception("stopped"))
   }
 
-  private def _format(message:String) = {
-    "[" + Thread.currentThread.getName +"/" + self.toString + "] " + message
-  }
 
-  def debug(message: => String) = if (isDebug) log.debug(_format(message))
-  def warning(message: => String) = if (isDebug) log.warning(_format(message))
-  def info(message: => String) = log.info(_format(message))
-  def error(message: => String) = log.error(_format(message))
+  def debug(message: => String) = if (isDebug) { log.mdc(mdc); log.debug(message);log.clearMDC() }
+
+  def warning(message: => String) = if (isDebug) log.warning(message)
+  def info(message: => String) = log.info(message)
+  def error(message: => String) = log.error(message)
 
   def started():PartialFunction[Any, Unit] = {
     {
@@ -321,7 +337,8 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
 
 }
 
-case class PhantomConfig(execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration=1 seconds,viewportHeight:Int=768,viewportWidth:Int=1024)
+case class PhantomConfig(execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration=1 seconds,viewportHeight:Int=768,viewportWidth:Int=1024,
+  proxy:String="",userAgent:String="Mozilla/5.0 (Windows NT 6.0;) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.120 Safari/537.36")
 
 object PhantomExecutionActor {
   def props(isDebug: Boolean = true, conf:PhantomConfig = PhantomConfig()): Props = Props(new PhantomExecutionActor(isDebug,conf))
@@ -762,6 +779,8 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
                                        """
   )
 
+  def submit() = singleValJsSet("""d[0].submit()""")
+
   implicit val clReads = (
     (__ \ "left").read[Double] and
       (__ \ "right").read[Double] and
@@ -791,7 +810,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
     singleValJsSet("d[0].value='"+quote(v)+"'")
   }
 
-  private def wrapException(x: => Unit) = try {
+  private def wrapException[T](x: => T):T = try {
     x
   } catch {
     case e:Throwable => throw new AutomationException(s"$selector failed: " + e.toString )
@@ -836,7 +855,8 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
           } else if ( rect == -3 ) {
             throw("OutOfScreen");
           } else if ( rect ) {
-            page.sendEvent('click', rect.left + rect.width / 2, rect.top + rect.height / 2);
+            debug("click " + (rect.left + rect.width / 2) + "   "  + (rect.top + rect.height / 2) );
+            page.sendEvent('click', rect.left + rect.width / 2, rect.top + rect.height / 2  );
             true;
           } else {
             throw("click failed");
@@ -846,6 +866,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
 
         )).mapTo[EvalResult].map {
         case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
+        case ex => println(s"BLIADII!!!!!!!!!!!!!!!!!!!!!! $ex")
       } , timeout)
     }
   }
@@ -1000,7 +1021,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
 
   def renderBase64() = {
     val _renderCode = s"var pcr = this.page.clipRect;this.page.clipRect=rect;var b64 = page.renderBase64('PNG');this.page.clipRect=pcr;b64;"
-    wrapException {
+    wrapException[String] {
       Await.result( (
         fetcher ? Eval(
           ("""var rect = """ + evfun("""R=null;
@@ -1128,6 +1149,7 @@ object Selector {
 
 
 object PhantomExecutor {
+  private var environmentReady = false
 
   val fastTimeout = 500.milliseconds
   implicit val askTimeout = Timeout(60.seconds)
@@ -1135,6 +1157,7 @@ object PhantomExecutor {
   def htmlquote(q:String) = q.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
 
   def apply(isDebug:Boolean=true,conf:PhantomConfig=PhantomConfig())(implicit system:ActorSystem): Page = {
+    assert(environmentReady)
     val idd = nextPhantomId
     val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=isDebug,conf),name=s"PhantomExecutor-$idd")
     new Page(fetcher,system)
@@ -1158,6 +1181,7 @@ object PhantomExecutor {
     val myFutureStuff = system.actorSelection("akka://"+system.name+"/user/"+name)
     val aid:ActorIdentity = Await.result(myFutureStuff.ask(Identify(1))(timeout).mapTo[ActorIdentity],
       0.1 seconds)
+
     aid.ref match {
       case Some(cacher) =>
         cacher
@@ -1166,5 +1190,10 @@ object PhantomExecutor {
     }
   }
 
+  def initEnvironment(implicit system:ActorSystem) {
 
+    val phantomIdCounter = selectActor[PhantomIdCounter](system,"PhantomIdCounter")
+
+    environmentReady = true
+  }
 }
