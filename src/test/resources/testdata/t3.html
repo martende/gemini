@@ -1,0 +1,50 @@
+<html>
+<head>
+    <title>t2</title>
+    <style>
+        #d2 {
+        height: 100px;
+        width: 100px;
+        }
+    </style>
+</head>
+<body>
+<div id="d1" class="t3">D1</div>
+<div id="d2" class="t3 d2class">D2</div>
+
+<div class="c0">
+    <div id="c11"></div>
+    <div id="c12"></div>
+</div>
+
+<div class="c1">
+    <div id="c11" style="position:relative;">
+        <span>span1</span>
+    </div>
+    <div id="c12" style="position:relative;">
+        <span>span2</span>
+    </div>
+</div>
+
+<div class="c1">
+    <div id="c21">
+        <span>span3</span>
+    </div>
+    <div id="c22"></div>
+</div>
+
+<div id="c3">
+    <span></span>
+<span>
+	<span></span>
+</span>
+</div>
+
+<script>
+document.getElementById("d2").addEventListener("click",function() {
+	console.log("D2CLICK");
+	d1.innerHTML= "D1C";
+});
+</script>
+</body>
+</html>

@@ -25,11 +25,16 @@ class geminiSpec // extends TestKit(ActorSystem())
   extends  FunSuiteLike with BeforeAndAfterAll /*
 with ImplicitSender with  */
 */
-class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutures with ImplicitSender {
+class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutures with ImplicitSender with BeforeAndAfterAll {
 
 
   //TODO: bad phantom bin should produce IOException
   //TODO: bad core.js path should produce some Exception ( not start timeout )
+
+  override def beforeAll {
+    PhantomExecutor.initEnvironment
+  }
+
 
   test("Actor successfully started") {
     val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=true),"test1")
@@ -173,11 +178,28 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
     val t = p.$("span").re("span[13]")
     assert(t.length == 2 )
   }
+
   test("11111") {
     val p: Page = PhantomExecutor(isDebug=false) // Create page
     val r: Future[Boolean] = p.open("/testdata/t2.html")
 
   }
+
+
+  test("double open")  {
+    val p = PhantomExecutor(isDebug=false)
+
+    assert ( p.open(this.getClass.getResource("/testdata/t2.html").toString).futureValue )
+
+    val t = p.$("span").re("span[13]")
+    assert(t.length == 2 )
+
+    assert ( p.open(this.getClass.getResource("/testdata/t3.html").toString).futureValue )
+
+    val t2 = p.$("span").re("span[13]")
+    assert(t2.length == 2 )
+  }
+
 
 }
 

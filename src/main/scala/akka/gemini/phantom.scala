@@ -43,7 +43,10 @@ class PhantomIdCounter extends Actor {
 class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor with akka.actor.DiagnosticActorLogging {
   import PhantomExecutionActor.Events._
 
-  val mdc = Map("phantomId" -> self.path.elements.last.split("-")(1))
+  val mdc = Map("phantomId" -> {
+    val parts =  self.path.elements.last.split("-")
+    if ( parts.length > 1 ) parts(0) else 1
+  })
 
   override def mdc(currentMessage: Any): MDC = mdc
 
@@ -185,7 +188,7 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
       //case ev : OpenUrlResult => 
       //    _sender ! ev
 
-      case x => error("Unknown action")
+      case x => error(s"Unknown action: $x")
 
     }
   }
@@ -253,9 +256,9 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
           val openUrlRet(pageId,status) = arg
           debug(s"opn cmd: '$pageId,$status'")
           if ( status == "success") self ! OpenUrlResult(Success(true))
-          else self ! OpenUrlResult(Failure(new Exception(status)))
+          else self ! OpenUrlResult(Failure(new Exception(s"openStatus=$status")))
         case "ERR" => error(s"error '$arg'")
-        case _ => error(s"Unknown phantom answer '$s'")
+        case _ => debug(s"Unknown phantom answer '$s'")
       }
     }
 
@@ -363,7 +366,7 @@ case class ClientRect(left:Double,right:Double,top:Double,bottom:Double,height:D
   override def toString = s"ClientRect( ($left,$top) / $width x $height)"
 }
 
-class Page(val fetcher:ActorRef,val system:ActorSystem) {
+class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
   // Implicit Execution context
   import system.dispatcher
   import PhantomExecutionActor.Events._
@@ -371,7 +374,8 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
 
   implicit val tm = PhantomExecutor.askTimeout
 
-  var opened = true
+  var opened  = true
+  var started = false
 
   private def wrapException(x: => Unit) = try {
     x
@@ -401,6 +405,11 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
     evaljs[Boolean](s"""page.switchToParentFrame();true;""")
   }
 
+  def stop() = wrapException {
+    evaljs[Boolean](s"""page.stop();true;""")
+  }
+
+
   def stats = {
     assert(opened)
     Await.result( (fetcher ? Stats() ).mapTo[StatsResult] , fastTimeout)
@@ -418,18 +427,25 @@ class Page(val fetcher:ActorRef,val system:ActorSystem) {
 
   def open(url:String,openTimeout:FiniteDuration = 10.seconds): Future[Boolean] = {
     assert(opened)
+
+    def _open = {
+      fetcher.ask(OpenUrl(url))(openTimeout).recover{
+        case ex:AskTimeoutException => OpenUrlResult(Failure(ex))
+      }.map {
+        case OpenUrlResult(Success(_)) => true
+        case OpenUrlResult(Failure(ex)) => println(s"Open - failed $ex");throw new AutomationException(s"Open url:'$url' - failed $ex")
+      }
+    }
+
+    if ( ! started )
     fetcher.ask(Start())(openTimeout).flatMap {
       case Started() =>
-
-        fetcher.ask(OpenUrl(url))(openTimeout).recover{
-          case ex:AskTimeoutException => OpenUrlResult(Failure(ex))
-        }.map {
-          case OpenUrlResult(Success(_)) => true
-          case OpenUrlResult(Failure(ex)) => throw new AutomationException(s"Open url:'$url' - failed $ex")
-        }
+        started = true
+        _open
       case Failed(ex) =>
         throw new AutomationException(s"Open - failed $ex")
-    }
+    } else
+      _open
 
   }
 
@@ -1160,7 +1176,7 @@ object PhantomExecutor {
     assert(environmentReady)
     val idd = nextPhantomId
     val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=isDebug,conf),name=s"PhantomExecutor-$idd")
-    new Page(fetcher,system)
+    new Page(fetcher,system,idd)
   }
 
 
