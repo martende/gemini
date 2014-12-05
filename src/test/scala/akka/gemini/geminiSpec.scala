@@ -28,6 +28,7 @@ with ImplicitSender with  */
 class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutures with ImplicitSender with BeforeAndAfterAll {
 
 
+
   //TODO: bad phantom bin should produce IOException
   //TODO: bad core.js path should produce some Exception ( not start timeout )
 
@@ -35,7 +36,7 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
     PhantomExecutor.initEnvironment
   }
 
-
+/*
   test("Actor successfully started") {
     val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=true),"test1")
     within (2 seconds) {
@@ -200,6 +201,16 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
     assert(t2.length == 2 )
   }
 
+
+  */
+  test("uploadfile") {
+    val p = PhantomExecutor(isDebug=true)
+
+    assert ( p.open(this.getClass.getResource("/testdata/t3.html").toString).futureValue )
+
+    p.uploadFile( p.$("input[type=file]") , this.getClass.getResource("/testdata/t3.html").toString)
+
+  }
 
 }
 

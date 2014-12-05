@@ -45,12 +45,13 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
 
   val mdc = Map("phantomId" -> {
     val parts =  self.path.elements.last.split("-")
-    if ( parts.length > 1 ) parts(0) else 1
-  })
+    if ( parts.length > 1 ) parts(1) else 1
+  }) ++ conf.extraMdcArgs
 
   override def mdc(currentMessage: Any): MDC = mdc
 
   var coreJsFile:Option[File] = None
+  var cookiesFile:Option[File] = None
 
   private def inputToFile(is: java.io.InputStream, f: java.io.File) {
     val in = scala.io.Source.fromInputStream(is)
@@ -66,6 +67,21 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
     else Seq("--proxy=" + proxy,"--proxy-type=http")
   }
 
+  def writeFile(fname:String,content:String) {
+    Some(new java.io.PrintWriter(fname)).foreach{p => p.write(content); p.close}
+  }
+
+  def getCookiesArgs(s: String) = {
+    val tmpFile = File.createTempFile("cookies", ".js")
+    val fName = tmpFile.getPath;
+    tmpFile.deleteOnExit()
+    cookiesFile = Some(tmpFile)
+
+    writeFile(fName,s)
+
+    Seq("--cookies-file="+fName)
+  }
+
   val phantomCmd:Seq[String] = {
     val c = context.system.settings.config
     import scala.collection.JavaConverters._
@@ -74,12 +90,13 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
     tmpFile.deleteOnExit()
     coreJsFile = Some(tmpFile)
 
-
     inputToFile(this.getClass.getResourceAsStream("/core.js"),tmpFile)
 
     val args:Seq[String] = c.getStringList("phantom.args").asScala
 
-    val phantomArgs: Seq[String] = args ++ ( if ( conf.proxy != "") mkProxySeq(conf.proxy)  else Seq() )
+    val phantomArgs: Seq[String] = args ++
+      ( if ( conf.proxy != "") mkProxySeq(conf.proxy)  else Seq() ) ++
+      getCookiesArgs(conf.startCookies)
 
 
     val appArgs:Seq[String] = Seq(
@@ -115,6 +132,7 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
     fatalPromise.trySuccess(1)
 
     coreJsFile.map(fname => fname.delete() )
+    cookiesFile.map(fname => fname.delete() )
   }
 
   def instart(_sender:ActorRef):PartialFunction[Any, Unit] = {
@@ -142,6 +160,10 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
   def warning(message: => String) = if (isDebug) log.warning(message)
   def info(message: => String) = log.info(message)
   def error(message: => String) = log.error(message)
+
+  def getCookies() = cookiesFile.fold("") {
+    fName => scala.io.Source.fromFile(fName).mkString
+  }
 
   def started():PartialFunction[Any, Unit] = {
     {
@@ -187,6 +209,13 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
 
       //case ev : OpenUrlResult => 
       //    _sender ! ev
+      case ev @ GetCookies() => sender ! CookiesResult(getCookies())
+
+      case ev @ Finished() =>
+        error(s"Finished from phantom received - seems that phantom unstable")
+        become(failed())
+        val fev = Failed(new Exception("phantom binary closed"))
+        for ( (id,_sender) <- currentInEvaluation) _sender ! fev
 
       case x => error(s"Unknown action: $x")
 
@@ -340,8 +369,23 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
 
 }
 
+/**
+ *
+ * @param execTimeout
+ * @param startTimeout
+ * @param viewportHeight
+ * @param viewportWidth
+ * @param proxy
+ * @param userAgent
+ * @param startCookies
+ * @param extraMdcArgs    - Map with extra parameters for logback logging. All params would be added to each logging record and can be used in logback.xml.
+ *                        This can be used for some log splitting and packing each communication session to different log.
+ */
+
 case class PhantomConfig(execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration=1 seconds,viewportHeight:Int=768,viewportWidth:Int=1024,
-  proxy:String="",userAgent:String="Mozilla/5.0 (Windows NT 6.0;) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.120 Safari/537.36")
+  proxy:String="",userAgent:String="Mozilla/5.0 (Windows NT 6.0;) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.120 Safari/537.36",
+  startCookies:String = "",
+                          extraMdcArgs:Map[String,String]=Map())
 
 object PhantomExecutionActor {
   def props(isDebug: Boolean = true, conf:PhantomConfig = PhantomConfig()): Props = Props(new PhantomExecutionActor(isDebug,conf))
@@ -359,6 +403,8 @@ object PhantomExecutionActor {
     case class OpenUrlResult(ret:Try[Boolean])
     case class StatsResult(evaluatedItems:Int)
     case class SetDebug(isDebug:Boolean)
+    case class GetCookies()
+    case class CookiesResult(cookies:String)
   }
 }
 
@@ -415,6 +461,11 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
     Await.result( (fetcher ? Stats() ).mapTo[StatsResult] , fastTimeout)
   }
 
+  def cookies = {
+    assert(opened)
+    Await.result( (fetcher ? GetCookies() ).mapTo[CookiesResult].map(_.cookies) , fastTimeout)
+  }
+
   def render(_fname:String) = {
     val fname = if ( _fname.endsWith(".png") ) _fname.substring(0,_fname.length-4) else _fname
     try {
@@ -446,6 +497,16 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
         throw new AutomationException(s"Open - failed $ex")
     } else
       _open
+
+  }
+
+  def uploadFile(inputType:Selector,filename:String) = wrapException {
+
+    evaljs[Boolean](s"""page.onFilePicker2 = page.onFilePicker;page.onFilePicker=function(){return '$filename';};true;""")
+
+    inputType.click()
+
+    evaljs[Boolean](s"""page.onFilePicker = page.onFilePicker2;true;""")
 
   }
 
