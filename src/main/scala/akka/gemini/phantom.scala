@@ -2,6 +2,7 @@ package akka.gemini
 
 import java.io._
 import java.nio.channels.FileChannel
+import java.util.concurrent.TimeUnit
 
 import akka.actor._
 import akka.event.DiagnosticLoggingAdapter
@@ -128,7 +129,7 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
 
   override def postStop() {
     gonaDie = true
-    info(s"stopped url=$currentUrl")
+    //info(s"stopped url=$currentUrl")
     fatalPromise.trySuccess(1)
 
     coreJsFile.map(fname => fname.delete() )
@@ -306,7 +307,14 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
             readFully()
           }
         }
-        readFully()
+        try {
+          readFully()
+        } catch {
+          case ex:Throwable =>
+            error(s"Read error. $ex. Close Phantom")
+            self ! Finished()
+        }
+
     },
     _ => ()
     )
@@ -315,7 +323,7 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
       debug("Start: " + phantomCmd.mkString(" "))
       Some(Process(phantomCmd).run(processor))
     } catch {
-      case ex:Exception =>
+      case ex:Throwable =>
         error(s"Start phantom exception $ex")
         self ! Failed(ex)
         None
@@ -418,7 +426,7 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
   import PhantomExecutionActor.Events._
   import PhantomExecutor.{fastTimeout,quote,htmlquote}
 
-  implicit val tm = PhantomExecutor.askTimeout
+  //implicit val tm = PhantomExecutor.askTimeout
 
   var opened  = true
   var started = false
@@ -431,6 +439,9 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
 
   private def evaljs[T](js:String,timeout:Duration = fastTimeout)(implicit r:Reads[T]):T = {
     assert(opened)
+
+    implicit val askTimeout = Timeout(timeout.toMillis*2,TimeUnit.MILLISECONDS)
+
     Await.result( (
       fetcher ? Eval(js)).mapTo[EvalResult].map {
       case EvalResult(hui) => Json.parse(hui.get).as[T](r)
@@ -458,11 +469,13 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
 
   def stats = {
     assert(opened)
+    implicit val askTimeout:akka.util.Timeout = fastTimeout * 2
     Await.result( (fetcher ? Stats() ).mapTo[StatsResult] , fastTimeout)
   }
 
   def cookies = {
     assert(opened)
+    implicit val askTimeout:akka.util.Timeout = fastTimeout * 2
     Await.result( (fetcher ? GetCookies() ).mapTo[CookiesResult].map(_.cookies) , fastTimeout)
   }
 
@@ -632,6 +645,9 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
   private def _waitForSelector(el:Selector,selectorFunction:String,timeout:Duration) = {
     assert(opened)
     val tms = Math.max(timeout.toMillis,100)
+
+    implicit val askTimeout = Timeout(timeout.toMillis*2,TimeUnit.MILLISECONDS)
+
     val js = """
         var timeout = """+tms+""";
         var ic = timeout / 100;
