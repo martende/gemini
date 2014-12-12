@@ -938,7 +938,16 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
             } else {""" + __calcBoundingRect +
             """
               var p = R.top + R.height / 2;
-              if ( p > h ) R = -3;
+              if ( p > h ) {
+                window.document.body.scrollTop = R.top;
+                R = {
+                  top: R.top - window.document.body.scrollTop,
+                  left: R.left,
+                  width: R.width,
+                  height: R.height,
+                  rollback: true
+                };
+              }
             }
                                                 """) + """
           if ( rect == -1 ) {
@@ -950,6 +959,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
           } else if ( rect ) {
             debug("click " + (rect.left + rect.width / 2) + "   "  + (rect.top + rect.height / 2) );
             page.sendEvent('click', rect.left + rect.width / 2, rect.top + rect.height / 2  );
+            if ( rect.rollback ) {page.evaluate(function() {window.document.body.scrollTop = 0;});}
             true;
           } else {
             throw("click failed");
@@ -959,7 +969,6 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
 
         )).mapTo[EvalResult].map {
         case EvalResult(hui) => Json.parse(hui.get).as[Boolean]
-        case ex => println(s"BLIADII!!!!!!!!!!!!!!!!!!!!!! $ex")
       } , timeout)
     }
   }
@@ -980,8 +989,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
             } else if ( d.length > 1 ) {
               console.log("ERROR:move:"+JSON.stringify(selector)+" many elements");
               R = -2;
-            } else {
-              R = d[0].getBoundingClientRect();
+            } else { """ + __calcBoundingRect + """
               var p = R.top + R.height / 2;
               if ( p > h ) {
                 window.document.body.scrollTop = R.top;
@@ -1004,9 +1012,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
             throw("OutOfScreen");
           } else if ( rect ) {
             page.sendEvent('mousemove', rect.left + rect.width / 2, rect.top + rect.height / 2);
-            if ( rect.rollback ) {
-              page.evaluate(function() {window.document.body.scrollTop = 0;});
-            }
+            if ( rect.rollback ) {page.evaluate(function() {window.document.body.scrollTop = 0;});}
             true;
           } else {
             throw("move failed");
@@ -1179,7 +1185,8 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
   def children = new ChildSelector(page,this)
   def offsetParent = new OffsetParentSelector(page,this)
   def parentNode = new ParentSelector(page,this)
-  def nextSibling = new SiblingSelector(page,this)
+  def nextSibling = new NextSiblingSelector(page,this)
+  def previousSibling = new PreviousSiblingSelector(page,this)
   def re(_re:String) = new RegexpSelector(page,this,_re)
 
   def getOrElse(default: => Selector): Selector = if ( exists() ) this else default
@@ -1210,8 +1217,12 @@ class ParentSelector(page:Page,parent:Selector) extends Selector(page) {
   def selector = "[" + parent.selector + ",'up']"
 }
 
-class SiblingSelector(page:Page,parent:Selector) extends Selector(page) {
+class NextSiblingSelector(page:Page,parent:Selector) extends Selector(page) {
   def selector = "[" + parent.selector + ",'ns']"
+}
+
+class PreviousSiblingSelector(page:Page,parent:Selector) extends Selector(page) {
+  def selector = "[" + parent.selector + ",'ps']"
 }
 
 class IdxSelector(page:Page,parent:Selector,idx:Int) extends Selector(page) {

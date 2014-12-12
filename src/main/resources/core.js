@@ -101,7 +101,13 @@ var _query = function(selector) {
     			var ds1 = ds0[i].nextElementSibling;
     			if ( ! exists(ds,ds1)  ) ds.push(ds1);
     		}
-    	} else if (selector[1] == '>') {
+    	} else if (selector[1] == 'ps') {
+            var ds0 = _query(selector[0]);
+            for ( var i = 0; i < ds0.length ; i++) {
+                var ds1 = ds0[i].previousElementSibling;
+                if ( ! exists(ds,ds1)  ) ds.push(ds1);
+            }
+        } else if (selector[1] == '>') {
     		var ds0 = _query(selector[0]);
     		for ( var i = 0; i < ds0.length ; i++) {
     			var ds1 = ds0[i].children;

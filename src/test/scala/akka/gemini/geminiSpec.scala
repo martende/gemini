@@ -36,7 +36,6 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
     PhantomExecutor.initEnvironment
   }
 
-/*
   test("Actor successfully started") {
     val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=true),"test1")
     within (2 seconds) {
@@ -202,7 +201,7 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
   }
 
 
-  */
+
   test("uploadfile") {
     val p = PhantomExecutor(isDebug=true)
 
