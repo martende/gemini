@@ -739,7 +739,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
     """if (!window._query)console.log("$$INJECT");var R;var d = _query(selector);""" +
     js.replaceAll("[\r\n]","") + "return R; } " + ","+selector+");"
 
-  def innerHTML:String = Await.result( (
+  def innerHTML:String = try Await.result( (
     fetcher ? Eval(
       evfun("""R="";
             for (var i=0;i<d.length;i++) {R+=d[i].innerHTML;}
@@ -747,8 +747,11 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
     )).mapTo[EvalResult].map {
     case EvalResult(hui) => Json.parse(hui.get).as[String]
   } , fastTimeout)
+  catch {
+    case e:Throwable => throw new AutomationException(s"innerHTML $selector failed: $e" )
+  }
 
-  def outerHTML:String = Await.result( (
+  def outerHTML:String = try Await.result( (
     fetcher ? Eval(
       evfun("""R="";
             for (var i=0;i<d.length;i++) {R+=d[i].outerHTML;}
@@ -756,7 +759,9 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
     )).mapTo[EvalResult].map {
     case EvalResult(hui) => Json.parse(hui.get).as[String]
   } , fastTimeout)
-
+  catch {
+    case e:Throwable => throw new AutomationException(s"outerHTML $selector failed: $e" )
+  }
 
   def _cleanup(s:String) = s.replace("\u00a0"," ")
 
