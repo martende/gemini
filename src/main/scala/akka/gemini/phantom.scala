@@ -1199,7 +1199,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
 }
 
 class CssSelector(page:Page,css:String) extends Selector(page) {
-  def selector = "'" + css + "'"
+  def selector = "'" + css.replace("\\","\\\\").replace("'","\\'") + "'"
 }
 
 class NestedSelector(page:Page,parent:Selector,css:String) extends Selector(page) {
