@@ -107,7 +107,7 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
       "--userAgent="+conf.userAgent
     )
 
-    Seq(c.getString("phantom.bin")) ++ phantomArgs ++ appArgs
+    Seq(if ( conf.phantomBin == null) c.getString("phantom.bin") else conf.phantomBin ) ++ phantomArgs ++ appArgs
 
   }
 
@@ -385,6 +385,7 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
  * @param viewportWidth
  * @param proxy
  * @param userAgent
+ * @param phantomBin
  * @param startCookies
  * @param extraMdcArgs    - Map with extra parameters for logback logging. All params would be added to each logging record and can be used in logback.xml.
  *                        This can be used for some log splitting and packing each communication session to different log.
@@ -392,8 +393,8 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
 
 case class PhantomConfig(execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration=1 seconds,viewportHeight:Int=768,viewportWidth:Int=1024,
   proxy:String="",userAgent:String="Mozilla/5.0 (Windows NT 6.0;) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.120 Safari/537.36",
-  startCookies:String = "",
-                          extraMdcArgs:Map[String,String]=Map())
+  phantomBin:String=null,
+  startCookies:String = "",extraMdcArgs:Map[String,String]=Map())
 
 object PhantomExecutionActor {
   def props(isDebug: Boolean = true, conf:PhantomConfig = PhantomConfig()): Props = Props(new PhantomExecutionActor(isDebug,conf))
