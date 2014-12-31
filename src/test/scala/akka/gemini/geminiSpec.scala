@@ -3,6 +3,7 @@ package akka.gemini
 
 import akka.actor.ActorSystem
 import akka.testkit.TestKit
+import org.scalatest.concurrent.PatienceConfiguration
 import org.scalatest.{FunSuiteLike, WordSpecLike, BeforeAndAfterAll}
 
 import org.scalatest.time.Span
@@ -35,7 +36,7 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
   override def beforeAll {
     PhantomExecutor.initEnvironment
   }
-
+/*
   test("Actor successfully started") {
     val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=true),"test1")
     within (2 seconds) {
@@ -201,9 +202,9 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
   }
 
 
-
+*/
   test("uploadfile") {
-    val p = PhantomExecutor(isDebug=true)
+    val p = PhantomExecutor(isDebug=false)
 
     assert ( p.open(this.getClass.getResource("/testdata/t3.html").toString).futureValue )
 
@@ -211,5 +212,39 @@ class geminiSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutu
 
   }
 
+/*
+  test("uploadfileIframe - oldfantom(phantom 1.10)") {
+    val p = PhantomExecutor(isDebug=true,PhantomConfig(phantomBin = "./bin/phantomjs"))
+
+    assert ( p.open(this.getClass.getResource("/testdata/t4.html").toString).futureValue )
+
+    p.uploadFile( p.$("input[type=file]") , this.getClass.getResource("/testdata/t3.html").toString)
+
+  }
+*/
+
 }
 
+
+
+class OnlineTests extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFutures with ImplicitSender with BeforeAndAfterAll {
+  override def beforeAll {
+    PhantomExecutor.initEnvironment
+  }
+  implicit override val patienceConfig =
+    PatienceConfig(timeout = Span(5, Seconds), interval = Span(100, Millis))
+
+
+  test("upload html5 style") {
+    val p = PhantomExecutor(isDebug=true,PhantomConfig(phantomBin = "/home/belka2/MProg/phantom_src_1.9/bin/phantomjs"))
+
+    p.open("http://www.dropzonejs.com/bootstrap.html").futureValue
+
+
+    p.uploadFile(p.$(".btn.btn-success.fileinput-button.dz-clickable"),"/tmp/5495bb2536fb7b3dcd532529.png")
+
+
+
+  }
+
+}

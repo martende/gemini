@@ -514,13 +514,20 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
 
   }
 
-  def uploadFile(inputType:Selector,filename:String) = wrapException {
+  def uploadFile(inputType:Selector,filename:String) = {
+    val res = try {
 
-    evaljs[Boolean](s"""page.onFilePicker2 = page.onFilePicker;page.onFilePicker=function(){return '$filename';};true;""")
+      evaljs[Boolean](s"""page.uploadOk=false;page.onFilePicker2 = page.onFilePicker;page.onFilePicker=function(){page.uploadOk=true;return '$filename';};true;""")
 
-    inputType.click()
+      inputType.click()
 
-    evaljs[Boolean](s"""page.onFilePicker = page.onFilePicker2;true;""")
+      evaljs[Boolean](s"""page.onFilePicker = page.onFilePicker2;page.uploadOk;""")
+
+    } catch {
+      case e:Throwable => throw new AutomationException(s"failed: " + e.toString )
+    }
+
+    if ( ! res ) throw new AutomationException(s"uploadFile - failed. res=$res")
 
   }
 
@@ -866,6 +873,7 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
   def attr(_attr:String):String = singleValJs[String]("d[0].getAttribute('"+_attr+"')")
   def attr(_attr:String,v:String) = singleValJsSet("d[0].setAttribute('"+_attr+"','"+quote(v)+"')")
 
+  def removeAttribute(_attr:String) = singleValJsSet("d[0].removeAttribute('"+_attr+"')")
 
   def appendChild(html:String) = singleValJsSet(
     """
