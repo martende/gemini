@@ -20,6 +20,8 @@ import scala.util.{Failure, Success, Try}
 import play.api.libs.json._
 import play.api.libs.functional.syntax._
 
+import scala.collection.JavaConverters._
+
 abstract class PhantomException extends Throwable
 class NoSuchElementException extends PhantomException
 class ManyElementsException extends PhantomException
@@ -28,6 +30,10 @@ class AutomationException(msg:String) extends PhantomException {
   override def toString = s"AutomationException($msg)"
 }
 
+
+object MediumType extends Enumeration{
+  val Phantom,PhantomOld,PyQt = Value
+}
 
 class PhantomIdCounter extends Actor {
   var idx = 0
@@ -83,31 +89,46 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
     Seq("--cookies-file="+fName)
   }
 
-  val phantomCmd:Seq[String] = {
-    val c = context.system.settings.config
-    import scala.collection.JavaConverters._
+  val phantomCmd:Seq[String] = conf.mediumType match {
+    case MediumType.PyQt =>
+      val c = context.system.settings.config
+      val args:Seq[String] = c.getStringList("phantom.args").asScala
+      val phantomArgs: Seq[String] = args ++
+        ( if ( conf.proxy != "") mkProxySeq(conf.proxy)  else Seq() ) ++
+        getCookiesArgs(conf.startCookies)
+      val extraArgs:Seq[String] = Seq(
+        "--verbose",
+        "--viewportHeight="+conf.viewportHeight.toString,
+        "--viewportWidth="+conf.viewportWidth.toString,
+        "--userAgent="+conf.userAgent
+      )
 
-    val tmpFile = File.createTempFile("core", ".js")
-    tmpFile.deleteOnExit()
-    coreJsFile = Some(tmpFile)
+      Seq(if ( conf.mediumBin == null) c.getString("phantom.pyqtbin") else conf.mediumBin ) ++ phantomArgs ++ extraArgs
 
-    inputToFile(this.getClass.getResourceAsStream("/core.js"),tmpFile)
+    case MediumType.Phantom | MediumType.PhantomOld =>
+      val c = context.system.settings.config
 
-    val args:Seq[String] = c.getStringList("phantom.args").asScala
+      val tmpFile = File.createTempFile("core", ".js")
+      tmpFile.deleteOnExit()
+      coreJsFile = Some(tmpFile)
 
-    val phantomArgs: Seq[String] = args ++
-      ( if ( conf.proxy != "") mkProxySeq(conf.proxy)  else Seq() ) ++
-      getCookiesArgs(conf.startCookies)
+      inputToFile(this.getClass.getResourceAsStream("/core.js"),tmpFile)
+
+      val args:Seq[String] = c.getStringList("phantom.args").asScala
+
+      val phantomArgs: Seq[String] = args ++
+        ( if ( conf.proxy != "") mkProxySeq(conf.proxy)  else Seq() ) ++
+        getCookiesArgs(conf.startCookies)
 
 
-    val appArgs:Seq[String] = Seq(
-      tmpFile.getPath,
-      "--viewportHeight="+conf.viewportHeight.toString,
-      "--viewportWidth="+conf.viewportWidth.toString,
-      "--userAgent="+conf.userAgent
-    )
+      val appArgs:Seq[String] = Seq(
+        tmpFile.getPath,
+        "--viewportHeight="+conf.viewportHeight.toString,
+        "--viewportWidth="+conf.viewportWidth.toString,
+        "--userAgent="+conf.userAgent
+      )
 
-    Seq(if ( conf.phantomBin == null) c.getString("phantom.bin") else conf.phantomBin ) ++ phantomArgs ++ appArgs
+      Seq(if ( conf.mediumBin == null) c.getString("phantom.bin") else conf.mediumBin ) ++ phantomArgs ++ appArgs
 
   }
 
@@ -291,33 +312,35 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
         case _ => debug(s"Unknown phantom answer '$s'")
       }
     }
-
-    val processor = new ProcessIO(
-    {
-      out =>
-        outputOpened.success(out)
-    },
-    {
-      in =>
-        val reader = new BufferedReader(new InputStreamReader(in))
-        def readFully() {
-          val line = reader.readLine()
-          if ( line != null ) {
-            processLine(line)
-            readFully()
-          }
-        }
-        try {
+    def inProcessor(in:InputStream) = {
+      val reader = new BufferedReader(new InputStreamReader(in))
+      def readFully() {
+        val line = reader.readLine()
+        if ( line != null ) {
+          processLine(line)
           readFully()
-        } catch {
-          case ex:Throwable =>
-            error(s"Read error. $ex. Close Phantom")
-            self ! Finished()
         }
-
-    },
-    _ => ()
-    )
+      }
+      try {
+        readFully()
+      } catch {
+        case ex:Throwable =>
+          error(s"Read error. $ex. Close Phantom")
+          self ! Finished()
+      }
+    }
+    val processor = conf.mediumType match {
+      case MediumType.Phantom | MediumType.PhantomOld => new ProcessIO(
+        { out =>outputOpened.success(out)},
+        inProcessor,
+        {_ => }
+      )
+      case MediumType.PyQt =>new ProcessIO(
+        { out =>outputOpened.success(out)},
+        {_ => },
+        inProcessor
+      )
+    }
 
     val processOp = try {
       debug("Start: " + phantomCmd.mkString(" "))
@@ -385,7 +408,8 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
  * @param viewportWidth
  * @param proxy
  * @param userAgent
- * @param phantomBin
+ * @param mediumBin
+ * @param mediumType
  * @param startCookies
  * @param extraMdcArgs    - Map with extra parameters for logback logging. All params would be added to each logging record and can be used in logback.xml.
  *                        This can be used for some log splitting and packing each communication session to different log.
@@ -393,7 +417,8 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
 
 case class PhantomConfig(execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration=1 seconds,viewportHeight:Int=768,viewportWidth:Int=1024,
   proxy:String="",userAgent:String="Mozilla/5.0 (Windows NT 6.0;) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.120 Safari/537.36",
-  phantomBin:String=null,
+  mediumBin:String=null,
+  mediumType:MediumType.Value = MediumType.Phantom,
   startCookies:String = "",extraMdcArgs:Map[String,String]=Map())
 
 object PhantomExecutionActor {
@@ -421,7 +446,7 @@ case class ClientRect(left:Double,right:Double,top:Double,bottom:Double,height:D
   override def toString = s"ClientRect( ($left,$top) / $width x $height)"
 }
 
-class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
+abstract class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
   // Implicit Execution context
   import system.dispatcher
   import PhantomExecutionActor.Events._
@@ -432,13 +457,13 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
   var opened  = true
   var started = false
 
-  private def wrapException(x: => Unit) = try {
+  protected def wrapException(x: => Unit) = try {
     x
   } catch {
     case e:Throwable => throw new AutomationException(s"failed: " + e.toString )
   }
 
-  private def evaljs[T](js:String,timeout:Duration = fastTimeout)(implicit r:Reads[T]):T = {
+  def evaljs[T](js:String,timeout:Duration = fastTimeout)(implicit r:Reads[T]):T = {
     assert(opened)
 
     implicit val askTimeout = Timeout(timeout.toMillis*2,TimeUnit.MILLISECONDS)
@@ -449,24 +474,12 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
     } , timeout)
   }
 
-  lazy val title:String = evaljs[String]("""page.evaluate(function() {return document.title;});""")
+  val title:String
 
-  def evalJsClient(js:String) = wrapException {
-    evaljs[Boolean](s"""page.evaluate(function(){"""+js.replaceAll("\n"," ")+""";return true;} );""")
-  }
-
-  def switchToChildFrame(frameNum:Int) = wrapException {
-    evaljs[Boolean](s"""page.switchToChildFrame($frameNum);true;""")
-  }
-
-  def switchToParentFrame() = wrapException {
-    evaljs[Boolean](s"""page.switchToParentFrame();true;""")
-  }
-
-  def stop() = wrapException {
-    evaljs[Boolean](s"""page.stop();true;""")
-  }
-
+  def evalJsClient(js:String): Unit
+  def switchToChildFrame(frameNum:Int):Unit
+  def switchToParentFrame():Unit
+  def stop():Unit
 
   def stats = {
     assert(opened)
@@ -480,61 +493,10 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
     Await.result( (fetcher ? GetCookies() ).mapTo[CookiesResult].map(_.cookies) , fastTimeout)
   }
 
-  def render(_fname:String) = {
-    val fname = if ( _fname.endsWith(".png") ) _fname.substring(0,_fname.length-4) else _fname
-    try {
-      evaljs[Boolean](s"page.render('$fname.png');fs.write('$fname.html',page.content,'w');true;",5 seconds)
-      //Logger("PhantomExecutor").info(s"Render page to $fname - OK")
-    } catch {
-      case ex:Throwable => //Logger("PhantomExecutor").warn(s"Render page to $fname - failed Exception($ex")
-    }
-  }
+  def render(_fname:String):Unit
+  def uploadFile(inputType:Selector,filename:String): Unit
+  def typeValue(input:Selector,v:String):Unit
 
-  def open(url:String,openTimeout:FiniteDuration = 10.seconds): Future[Boolean] = {
-    assert(opened)
-
-    def _open = {
-      fetcher.ask(OpenUrl(url))(openTimeout).recover{
-        case ex:AskTimeoutException => OpenUrlResult(Failure(ex))
-      }.map {
-        case OpenUrlResult(Success(_)) => true
-        case OpenUrlResult(Failure(ex)) => println(s"Open - failed $ex");throw new AutomationException(s"Open url:'$url' - failed $ex")
-      }
-    }
-
-    if ( ! started )
-    fetcher.ask(Start())(openTimeout).flatMap {
-      case Started() =>
-        started = true
-        _open
-      case Failed(ex) =>
-        throw new AutomationException(s"Open - failed $ex")
-    } else
-      _open
-
-  }
-
-  def uploadFile(inputType:Selector,filename:String) = {
-    val res = try {
-
-      evaljs[Boolean](s"""page.uploadOk=false;page.onFilePicker2 = page.onFilePicker;page.onFilePicker=function(){page.uploadOk=true;return '$filename';};true;""")
-
-      inputType.click()
-
-      evaljs[Boolean](s"""page.onFilePicker = page.onFilePicker2;page.uploadOk;""")
-
-    } catch {
-      case e:Throwable => throw new AutomationException(s"failed: " + e.toString )
-    }
-
-    if ( ! res ) throw new AutomationException(s"uploadFile - failed. res=$res")
-
-  }
-
-  def typeValue(input:Selector,v:String) {
-    input.click()
-    input.value = v
-  }
 
   def selectDatepickerDate(date:org.joda.time.DateTime,
                            dateFormat: String,
@@ -650,6 +612,95 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
 
   def setDebug(isDebug:Boolean) = fetcher ! SetDebug(isDebug)
 
+  def open(url:String,openTimeout:FiniteDuration = 10.seconds): Future[Boolean]
+
+  def $(cssSelectors:String*) = if (cssSelectors.length == 1 ) Selector(this,cssSelectors.head)
+  else Selector(this,cssSelectors.map {css => Selector(this,css) },ConjunctionType.AND)
+
+}
+
+class PhantomPage(fetcher:ActorRef,override val system:ActorSystem,phantomId:Int) extends Page(fetcher,system,phantomId) {
+  // Implicit Execution context
+  import system.dispatcher
+
+  import PhantomExecutionActor.Events._
+  import PhantomExecutor.{fastTimeout,quote,htmlquote}
+
+
+  lazy val title:String = evaljs[String]("""page.evaluate(function() {return document.title;});""")
+
+  def evalJsClient(js:String): Unit = wrapException {
+    evaljs[Boolean](s"""page.evaluate(function(){"""+js.replaceAll("\n"," ")+""";return true;} );""")
+  }
+
+  def switchToChildFrame(frameNum:Int) = wrapException {
+    evaljs[Boolean](s"""page.switchToChildFrame($frameNum);true;""")
+  }
+
+  def switchToParentFrame(): Unit = wrapException {
+    evaljs[Boolean](s"""page.switchToParentFrame();true;""")
+  }
+
+  def stop() = wrapException {
+    evaljs[Boolean](s"""page.stop();true;""")
+  }
+
+  def render(_fname:String) = {
+    val fname = if ( _fname.endsWith(".png") ) _fname.substring(0,_fname.length-4) else _fname
+    try {
+      evaljs[Boolean](s"page.render('$fname.png');fs.write('$fname.html',page.content,'w');true;",5 seconds)
+      //Logger("PhantomExecutor").info(s"Render page to $fname - OK")
+    } catch {
+      case ex:Throwable => //Logger("PhantomExecutor").warn(s"Render page to $fname - failed Exception($ex")
+    }
+  }
+
+  def open(url:String,openTimeout:FiniteDuration = 10.seconds): Future[Boolean] = {
+    assert(opened)
+
+    def _open = {
+      fetcher.ask(OpenUrl(url))(openTimeout).recover{
+        case ex:AskTimeoutException => OpenUrlResult(Failure(ex))
+      }.map {
+        case OpenUrlResult(Success(_)) => true
+        case OpenUrlResult(Failure(ex)) => println(s"Open - failed $ex");throw new AutomationException(s"Open url:'$url' - failed $ex")
+      }
+    }
+
+    if ( ! started )
+    fetcher.ask(Start())(openTimeout).flatMap {
+      case Started() =>
+        started = true
+        _open
+      case Failed(ex) =>
+        throw new AutomationException(s"Open - failed $ex")
+    } else
+      _open
+
+  }
+
+  def uploadFile(inputType:Selector,filename:String): Unit = {
+    val res = try {
+
+      evaljs[Boolean](s"""page.uploadOk=false;page.onFilePicker2 = page.onFilePicker;page.onFilePicker=function(){page.uploadOk=true;return '$filename';};true;""")
+
+      inputType.click()
+
+      evaljs[Boolean](s"""page.onFilePicker = page.onFilePicker2;page.uploadOk;""")
+
+    } catch {
+      case e:Throwable => throw new AutomationException(s"failed: " + e.toString )
+    }
+
+    if ( ! res ) throw new AutomationException(s"uploadFile - failed. res=$res")
+
+  }
+
+  def typeValue(input:Selector,v:String) {
+    input.click()
+    input.value = v
+  }
+
   private def _waitForSelector(el:Selector,selectorFunction:String,timeout:Duration) = {
     assert(opened)
     val tms = Math.max(timeout.toMillis,100)
@@ -723,9 +774,6 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
     _waitForSelector(el,selectorFunction,timeout)
   }
 
-
-  def $(cssSelectors:String*) = if (cssSelectors.length == 1 ) Selector(this,cssSelectors.head)
-  else Selector(this,cssSelectors.map {css => Selector(this,css) },ConjunctionType.AND)
 
 }
 
@@ -920,7 +968,8 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
   private def wrapException[T](x: => T):T = try {
     x
   } catch {
-    case e:Throwable => throw new AutomationException(s"$selector failed: " + e.toString )
+    case e:Throwable =>
+      throw new AutomationException(s"$selector failed: " + e.toString )
   }
 
 
@@ -971,7 +1020,6 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
           } else if ( rect == -3 ) {
             throw("OutOfScreen");
           } else if ( rect ) {
-            debug("click " + (rect.left + rect.width / 2) + "   "  + (rect.top + rect.height / 2) );
             page.sendEvent('click', rect.left + rect.width / 2, rect.top + rect.height / 2  );
             if ( rect.rollback ) {page.evaluate(function() {window.document.body.scrollTop = 0;});}
             true;
@@ -1246,6 +1294,7 @@ class IdxSelector(page:Page,parent:Selector,idx:Int) extends Selector(page) {
   }
 }
 
+
 object ConjunctionType extends Enumeration{
     val AND,OR = Value
 }
@@ -1278,7 +1327,7 @@ object PhantomExecutor {
     assert(environmentReady)
     val idd = nextPhantomId
     val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=isDebug,conf),name=s"PhantomExecutor-$idd")
-    new Page(fetcher,system,idd)
+    new PhantomPage(fetcher,system,idd)
   }
 
 

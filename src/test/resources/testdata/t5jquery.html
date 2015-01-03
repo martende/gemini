@@ -1,0 +1,46 @@
+<html>
+<head>
+    <title>t2</title>
+    <style>
+        #d2 {
+        height: 100px;
+        width: 100px;
+        }
+    </style>
+     <script src="http://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
+     <script src="dropzone.js"></script>
+
+</head>
+<body>
+
+<form>
+
+    <input type="file"  id="f1">
+
+</form>
+
+<div id="fupl2">fupl2</div>
+<div id="dz1">dz1</div>
+
+<script>
+
+$(function() {
+    var myDropzone = new Dropzone("div#dz1", { url: "/file/post"});
+
+    //document.querySelectorAll("input[type=file]")[1].removeAttribute("multiple");
+    //document.querySelectorAll("input[type=file]")[1].setAttribute("multiple");
+
+    console.log("loaded");
+
+    $("#fupl2").click(function() {
+        console.log("fupl2 - clicked");
+        //document.getElementById("fupl1").click();
+        document.querySelectorAll("#f1")[0].click();
+    });
+
+
+});
+
+</script>
+</body>
+</html>
