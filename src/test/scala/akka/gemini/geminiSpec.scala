@@ -320,6 +320,7 @@ class PyQtSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFuture
             assert(cnt==1)
           }
   */
+  /*
             test("children $") {
               val p = PhantomExecutor(isDebug=false,conf = conf)
 
@@ -408,7 +409,7 @@ class PyQtSpec extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFuture
                 val t2 = p.$("span").re("span[13]")
                 assert(t2.length == 2 )
               }
-
+*/
 
 
               test("uploadfile") {
@@ -433,7 +434,7 @@ class OnlineTests extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFut
   implicit override val patienceConfig =
     PatienceConfig(timeout = Span(5, Seconds), interval = Span(100, Millis))
 
-
+/*
   test("upload html5 style") {
     val p = PhantomExecutor(isDebug=true,PhantomConfig(mediumBin = "./bin/phantomjs"))
 
@@ -444,5 +445,15 @@ class OnlineTests extends TestKit(ActorSystem()) with FunSuiteLike with ScalaFut
 
 
   }
+*/
+  test("upload html5 style - PyQT") {
+    val p = PhantomExecutor(isDebug=true,PhantomConfig(mediumType = MediumType.PyQt))
 
+    p.open("http://www.dropzonejs.com/bootstrap.html").futureValue
+
+
+    p.uploadFile(p.$(".btn.btn-success.fileinput-button.dz-clickable"),this.getClass.getResource("/testdata/t3.html").toString)
+
+
+  }
 }
