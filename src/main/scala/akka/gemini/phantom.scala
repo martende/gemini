@@ -92,7 +92,7 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
   val phantomCmd:Seq[String] = conf.mediumType match {
     case MediumType.PyQt =>
       val c = context.system.settings.config
-      val args:Seq[String] = c.getStringList("phantom.args").asScala
+      val args:Seq[String] = c.getStringList("phantom.pyqtargs").asScala
       val phantomArgs: Seq[String] = args ++
         ( if ( conf.proxy != "") mkProxySeq(conf.proxy)  else Seq() ) ++
         getCookiesArgs(conf.startCookies)
@@ -446,7 +446,7 @@ case class ClientRect(left:Double,right:Double,top:Double,bottom:Double,height:D
   override def toString = s"ClientRect( ($left,$top) / $width x $height)"
 }
 
-abstract class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
+class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
   // Implicit Execution context
   import system.dispatcher
   import PhantomExecutionActor.Events._
@@ -474,12 +474,6 @@ abstract class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:In
     } , timeout)
   }
 
-  val title:String
-
-  def evalJsClient(js:String): Unit
-  def switchToChildFrame(frameNum:Int):Unit
-  def switchToParentFrame():Unit
-  def stop():Unit
 
   def stats = {
     assert(opened)
@@ -493,10 +487,20 @@ abstract class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:In
     Await.result( (fetcher ? GetCookies() ).mapTo[CookiesResult].map(_.cookies) , fastTimeout)
   }
 
-  def render(_fname:String):Unit
-  def uploadFile(inputType:Selector,filename:String): Unit
-  def typeValue(input:Selector,v:String):Unit
-
+  /**
+   * types text v in selector
+   * @param input
+   * @param v
+   * @param realType:Boolean - if (realType == true) imlpemenets real sendevent typing otherwise just .value setter
+   */
+  def typeValue(input:Selector,v:String,realType:Boolean=false) {
+    input.click()
+    if (realType) {
+      evaljs[Boolean]("page.sendEvent('keypress','"+quote(v)+"',0);true;")
+    } else {
+      input.value = v
+    }
+  }
 
   def selectDatepickerDate(date:org.joda.time.DateTime,
                            dateFormat: String,
@@ -612,19 +616,8 @@ abstract class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:In
 
   def setDebug(isDebug:Boolean) = fetcher ! SetDebug(isDebug)
 
-  def open(url:String,openTimeout:FiniteDuration = 10.seconds): Future[Boolean]
-
   def $(cssSelectors:String*) = if (cssSelectors.length == 1 ) Selector(this,cssSelectors.head)
   else Selector(this,cssSelectors.map {css => Selector(this,css) },ConjunctionType.AND)
-
-}
-
-class PhantomPage(fetcher:ActorRef,override val system:ActorSystem,phantomId:Int) extends Page(fetcher,system,phantomId) {
-  // Implicit Execution context
-  import system.dispatcher
-
-  import PhantomExecutionActor.Events._
-  import PhantomExecutor.{fastTimeout,quote,htmlquote}
 
 
   lazy val title:String = evaljs[String]("""page.evaluate(function() {return document.title;});""")
@@ -668,13 +661,13 @@ class PhantomPage(fetcher:ActorRef,override val system:ActorSystem,phantomId:Int
     }
 
     if ( ! started )
-    fetcher.ask(Start())(openTimeout).flatMap {
-      case Started() =>
-        started = true
-        _open
-      case Failed(ex) =>
-        throw new AutomationException(s"Open - failed $ex")
-    } else
+      fetcher.ask(Start())(openTimeout).flatMap {
+        case Started() =>
+          started = true
+          _open
+        case Failed(ex) =>
+          throw new AutomationException(s"Open - failed $ex")
+      } else
       _open
 
   }
@@ -696,10 +689,6 @@ class PhantomPage(fetcher:ActorRef,override val system:ActorSystem,phantomId:Int
 
   }
 
-  def typeValue(input:Selector,v:String) {
-    input.click()
-    input.value = v
-  }
 
   private def _waitForSelector(el:Selector,selectorFunction:String,timeout:Duration) = {
     assert(opened)
@@ -773,7 +762,14 @@ class PhantomPage(fetcher:ActorRef,override val system:ActorSystem,phantomId:Int
     }
     _waitForSelector(el,selectorFunction,timeout)
   }
+}
 
+class PhantomPage(fetcher:ActorRef,override val system:ActorSystem,phantomId:Int) extends Page(fetcher,system,phantomId) {
+  // Implicit Execution context
+  import system.dispatcher
+
+  import PhantomExecutionActor.Events._
+  import PhantomExecutor.{fastTimeout,quote,htmlquote}
 
 }
 
