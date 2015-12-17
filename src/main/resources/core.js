@@ -66,6 +66,10 @@ page.onPageCreated = function(newPage) {
 
 };
 
+page.onResourceRequested = function(requestData, networkRequest) {
+  console.log('CLT:Request (#' + requestData.id + '): ' + JSON.stringify(requestData));
+};
+
 
 var _query = function(selector) {
     var idx = null;

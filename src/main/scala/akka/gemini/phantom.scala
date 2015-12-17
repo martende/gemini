@@ -100,7 +100,8 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
         "--verbose",
         "--viewportHeight="+conf.viewportHeight.toString,
         "--viewportWidth="+conf.viewportWidth.toString,
-        "--userAgent="+conf.userAgent
+        "--userAgent="+conf.userAgent,
+        "--silent=" + (if (conf.headlessMode) "yes" else "no")
       )
 
       Seq(if ( conf.mediumBin == null) c.getString("phantom.pyqtbin") else conf.mediumBin ) ++ phantomArgs ++ extraArgs
@@ -284,10 +285,23 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
             case "STARTED" => magicReceived.success(true)
           }
         case "RET" =>
-          val retParser = """(\d+):(.*)$""".r
-          val retParser(retId,result) = arg
-          debug(s"ret cmd: '$retId,$result'")
-          self ! EvalComplete(retId.toInt,Success(result))
+          //val retParser = """^(\d+):(.*)""".r
+          var m = arg.split(":",2)
+          if (m.size == 2) {
+            val retId =  m(0).toInt
+            val result =  m(1)
+            debug(s"ret cmd: '$retId,${result.take(100)}'")
+            self ! EvalComplete(retId.toInt,Success(result))
+          } else {
+            val file = new File("/tmp/badanswer.txt")
+            val bw = new BufferedWriter(new FileWriter(file))
+            bw.write(arg)
+            bw.close()
+
+            throw new Exception(s"Bad RET answer. Written to ${file.getName}")
+          }
+          //val retParser(retId,result) = arg
+
         case "ERT" =>
           val retParser = """(\d+):(.*)$""".r
           val retParser(retId,result) = arg
@@ -326,6 +340,7 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
       } catch {
         case ex:Throwable =>
           error(s"Read error. $ex. Close Phantom")
+          error(ex.getStackTrace.mkString("\n"))
           self ! Finished()
       }
     }
@@ -410,15 +425,17 @@ class PhantomExecutionActor(_isDebug:Boolean,conf:PhantomConfig) extends Actor w
  * @param userAgent
  * @param mediumBin
  * @param mediumType
+ * @param headlessMode      - If medium supports work in window mode , headlessMode = false means window should be shown. Works for PyQt medium
  * @param startCookies
  * @param extraMdcArgs    - Map with extra parameters for logback logging. All params would be added to each logging record and can be used in logback.xml.
  *                        This can be used for some log splitting and packing each communication session to different log.
  */
 
-case class PhantomConfig(execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration=1 seconds,viewportHeight:Int=768,viewportWidth:Int=1024,
+case class PhantomConfig(execTimeout:FiniteDuration=120.seconds,startTimeout:FiniteDuration=1 seconds,fastTimeout:FiniteDuration=500.milliseconds,viewportHeight:Int=768,viewportWidth:Int=1024,
   proxy:String="",userAgent:String="Mozilla/5.0 (Windows NT 6.0;) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.120 Safari/537.36",
   mediumBin:String=null,
   mediumType:MediumType.Value = MediumType.Phantom,
+  headlessMode:Boolean = true,
   startCookies:String = "",extraMdcArgs:Map[String,String]=Map())
 
 object PhantomExecutionActor {
@@ -496,6 +513,7 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
   def typeValue(input:Selector,v:String,realType:Boolean=false) {
     input.click()
     if (realType) {
+      input.value = ""
       evaljs[Boolean]("page.sendEvent('keypress','"+quote(v)+"',0);true;")
     } else {
       input.value = v
@@ -583,6 +601,35 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
     }
   }
 
+  /**
+   * Selects targetEl item on container , and scroll container to it if needed
+   * @param container
+   * @param targetEl
+   */
+  def selectInScrollableContainer(container : Selector ,targetEl : Selector) {
+    val ob = container.getBoundingClientRect
+
+    val tb = targetEl.getBoundingClientRect
+
+    if ( tb.height == 0 || tb.width == 0 ) throw new AutomationException("Scrolling failed - targetEl is invisible")
+
+    if ( tb.top >= ob.top &&  tb.bottom <= ob.bottom ) {
+      targetEl.click()
+    } else {
+      val sof = tb.bottom - ob.top - ob.height
+
+      container.scrollTop += sof
+
+      val newtb = targetEl.getBoundingClientRect
+      if ( newtb.top >= ob.top &&  newtb.bottom <= ob.bottom ) {
+
+        targetEl.click()
+      } else {
+        throw new AutomationException("Scrolling failed")
+      }
+    }
+  }
+
   def close() = {
     assert(opened)
     opened = false
@@ -656,7 +703,7 @@ class Page(val fetcher:ActorRef,val system:ActorSystem,val phantomId:Int) {
         case ex:AskTimeoutException => OpenUrlResult(Failure(ex))
       }.map {
         case OpenUrlResult(Success(_)) => true
-        case OpenUrlResult(Failure(ex)) => println(s"Open - failed $ex");throw new AutomationException(s"Open url:'$url' - failed $ex")
+        case OpenUrlResult(Failure(ex)) => /*println(s"Open - failed $ex");*/throw new AutomationException(s"Open url:'$url' - failed $ex")
       }
     }
 
@@ -1314,13 +1361,13 @@ object Selector {
 object PhantomExecutor {
   private var environmentReady = false
 
-  val fastTimeout = 500.milliseconds
+  val fastTimeout = 1000.milliseconds
   implicit val askTimeout = Timeout(60.seconds)
   def quote(q:String) = q.replace("'","\\'")
   def htmlquote(q:String) = q.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
 
   def apply(isDebug:Boolean=true,conf:PhantomConfig=PhantomConfig())(implicit system:ActorSystem): Page = {
-    assert(environmentReady)
+    assert(environmentReady,s"Environment is not ready. Call initEnvironment before start.")
     val idd = nextPhantomId
     val fetcher = system.actorOf(PhantomExecutionActor.props(isDebug=isDebug,conf),name=s"PhantomExecutor-$idd")
     new PhantomPage(fetcher,system,idd)

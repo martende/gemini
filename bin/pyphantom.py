@@ -3,7 +3,8 @@ import sys
 import os
 
 if "/home/belka/qt4/lib/" in os.environ.get("LD_LIBRARY_PATH",""):
-#  print "Init Precompiled qt4 version (WebSecurityEnabled patch)"
+  # export LD_LIBRARY_PATH=/home/belka/qt4/lib/
+  #  print "Init Precompiled qt4 version (WebSecurityEnabled patch)"
   sys.path = ["/home/belka/PyQt4/lib",] + sys.path[:]
   from PyQt4.QtCore import QT_VERSION_STR
   assert(QT_VERSION_STR == "4.8.7")
@@ -51,7 +52,7 @@ class ControllerPage(QWebPage):
       self.parent().javaScriptConsoleMessageSent.emit(message, lineNumber, sourceID)
 
     def onEval(self,data):
-      a = str(data).split(" ",1)
+      a = unicode(data).split(" ",1)
 
       if ( len(a) != 2 ):
         self.phantom.error("EVAL format error len(a)=%d" % len(a))
@@ -67,7 +68,7 @@ class ControllerPage(QWebPage):
           self.phantom.ret(eid,retVal)
 
     def onAval(self,data):
-      a = str(data).split(" ",1)
+      a = unicode(data).split(" ",1)
 
       if ( len(a) != 2 ):
         self.phantom.error("EVAL format error len(a)=%d" % len(a))
@@ -372,6 +373,17 @@ class CookieJar(QNetworkCookieJar):
     #  
     #  return cookieList
 
+class NetworkAccessManager(QNetworkAccessManager):
+  def __init__(self, parent,args):
+    super(NetworkAccessManager, self).__init__(parent)    
+    self.args = args
+  def createRequest(self, op, req, outgoingData):
+    for k in self.args:
+      req.setRawHeader(k, self.args[k] )
+
+    reply = QNetworkAccessManager.createRequest(self, op, req, outgoingData)
+    return reply
+
 class ContentPage(QWebPage):
   openSignalSent = pyqtSignal(str)
 
@@ -386,7 +398,10 @@ class ContentPage(QWebPage):
     self.pageId = 0
     self.userAgent = args.userAgent
 
-    nam = QNetworkAccessManager(self)
+    nam = NetworkAccessManager(self,{
+      'Accept-Language' : 'en-US,en;q=0.8,ru;q=0.6,de;q=0.4',
+      'Accept' :'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8,huye=a'
+    })
 
     if args.cookies_file:
       #self.networkAccessManager().setCookieJar(CookieJar(self, args.cookies_file))
@@ -421,12 +436,15 @@ class ContentPage(QWebPage):
         self.phantom.out("OPN:" + str(self.pageId) + ":fail") 
     
   def _handle_multiple_files(self, info, files):
+    print "_handle_multiple_files"
     result = self.chooseFile(None,None)
     if result:
       files.fileNames = [result]
   
     return True
   def chooseFile(self, originatingFrame, oldFile):
+    print "chooseFile"
+    oldFile = "/tmp/t.png"
     result = self.phantom.controllerPage.mainFrame().evaluateJavaScript("""if(page.onFilePicker) page.onFilePicker(); else null""").toPyObject()
     if result:
       return result
@@ -447,8 +465,8 @@ class ContentPage(QWebPage):
     else:
       self.phantom.javaScriptConsoleMessageSent.emit("CLT:" + message, lineNumber, sourceID)
 
-  #def userAgentForUrl(self, url):
-  #  return self.userAgent
+  def userAgentForUrl(self, url):
+    return self.userAgent
 
   def injectQueryFunction(self):
 
@@ -748,16 +766,20 @@ class Phantom(QObject):
   @pyqtSlot(int,str, result='QVariant')
   def errret(self,eid,msg):
     msg = self.convert(msg)
-    sys.stderr.write("ERT:" + str(eid) + ":" + str(msg.replace("\n"," ")) + "\n")
+    sys.stderr.write("ERT:" + unicode(eid) + ":" + unicode(msg.replace("\n"," ")) + "\n")
   
   def error(self,msg):
     msg = self.convert(msg)
-    sys.stderr.write("ERR:" + str(msg) + "\n")
+    sys.stderr.write(u"ERR:" + unicode(msg) + u"\n")
 
   def debug(self,msg):
     msg = self.convert(msg)
     if self.verbose:
-      sys.stderr.write("DBG:" + str(msg) + "\n")
+      #msg = msg.decode('utf-8')
+      try:
+        sys.stderr.write(u"DBG:" + msg + u"\n")
+      except:
+        sys.stderr.write(u"DBG:unicode encoding error\n")
   #view.load(QtCore.QUrl('test.html'))
   #view.load(QtCore.QUrl("https://www.blogger.com/blogger.g?blogID=3210038986647032047#editor/src=sidebar"))
   
@@ -803,16 +825,16 @@ def parseArgs(arguments):
   parser.add_argument('--cookies-file', metavar='/path/to/cookies.txt',
     help='Sets the file name to store the persistent cookies'
   )
-
-  parser.add_argument('--userAgent',default ="Mozilla/5.0 (Windows NT 6.0;) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.120 Safari/537.36",
+  #Mozilla/5.0 (Windows NT 6.0;) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.120 Safari/537.36
+  parser.add_argument('--userAgent',default ="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.120 Safari/537.36",
     help='userAgent'
   )
 
-  parser.add_argument('--viewportHeight',default = 768,type=int,
+  parser.add_argument('--viewportHeight',default = 1050,type=int,
     help='viewportHeight'
   )
 
-  parser.add_argument('--viewportWidth',default = 1024,type=int,
+  parser.add_argument('--viewportWidth',default = 1680,type=int,
     help='viewportWidth'
   )
 
