@@ -54,7 +54,7 @@ p.close
 ###Install:
 
 Gemini uses pathched version of phantomjs with asyncIo api from https://github.com/execjosh/phantomjs.git and branch WIP-async-file-io
-
+or https://github.com/martende/phantomjs/tree/ASYNC_1.9 patched 1.9 version.
 **Warning !!!** - On current 1.9 phantomjs release gemini does not work.
 
 For instalation do something like 
