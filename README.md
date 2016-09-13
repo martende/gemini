@@ -120,6 +120,7 @@ import scala.concurrent.duration._
 object Hi {
   def main(args: Array[String]) = {
   	implicit val system = ActorSystem("MySystem")
+  	PhantomExecutor.initEnvironment
 	val p = PhantomExecutor(isDebug=false)
 	
 	scala.concurrent.Await.result({
