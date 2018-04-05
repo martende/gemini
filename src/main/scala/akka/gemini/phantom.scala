@@ -930,10 +930,10 @@ abstract class Selector(page:Page) extends Traversable[Selector] {
     try Await.result( ( fetcher ? Eval(
       """var retval = """ + evfun("""R=null;
           if ( d.length == 0 ) {
-            console.log("ERROR:click:"+JSON.stringify(selector)+" element not found");
+            console.log("ERROR:singleValJsSet:"+JSON.stringify(selector)+" element not found");
             R = -1;
           } else if ( d.length > 1 ) {
-            console.log("ERROR:click:"+JSON.stringify(selector)+" many elements");
+            console.log("ERROR:singleValJsSet:"+JSON.stringify(selector)+" many elements");
             R = -2;
           } else {
                                   """+js+""";
